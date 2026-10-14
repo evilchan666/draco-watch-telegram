@@ -40,6 +40,8 @@ import org.omega.dracowatch.telegram.PinnedLineView;
 import org.telegram.ui.Components.ChatActivityEnterTopView;
 
 import java.text.DateFormat;
+import java.text.ParsePosition;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Collections;
@@ -48,6 +50,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.TimeZone;
 import java.util.WeakHashMap;
 
 /**
@@ -416,7 +419,8 @@ public final class TelegramSurface extends FrameLayout {
 
         boolean nextChat = value.optBoolean("chat");
         String nextView = value.optString("view", "chats");
-        String nextIdentity = nextView + ":" + nextChat + ":" + value.optString("agent") + ":" + value.optString("sessionId");
+        String nextIdentity = nextView + ":" + nextChat + ":" + value.optString("agent") + ":"
+            + value.optString("sessionKey") + ":" + value.optString("sessionId");
         boolean changedConversation = !nextIdentity.equals(identity);
         if (changedConversation) {
             identity = nextIdentity;
@@ -594,7 +598,8 @@ public final class TelegramSurface extends FrameLayout {
     private void updateRows(boolean changedConversation) {
         JSONArray content = payload.optJSONArray(chat ? "messages" : "activity".equals(viewName) ? "activity" : "roster");
         JSONArray sessionWork = chat ? payload.optJSONArray("work") : null;
-        String signature = viewName + ":" + chat + ":" + appScale + ":" + nativeFontScale + ":" + String.valueOf(content) + String.valueOf(sessionWork);
+        String signature = viewName + ":" + chat + ":" + appScale + ":" + nativeFontScale + ":"
+            + TimeZone.getDefault().getID() + ":" + Locale.getDefault() + ":" + String.valueOf(content) + String.valueOf(sessionWork);
         if (signature.equals(rowsSignature)) return;
         rowsSignature = signature;
         int first = list.getFirstVisiblePosition();
@@ -607,16 +612,22 @@ public final class TelegramSurface extends FrameLayout {
             JSONObject item = content.optJSONObject(i);
             if (item == null) continue;
             String type = chat ? "message" : "activity".equals(viewName) ? "activity" : "agent";
+            if ("message".equals(type) && item.optBoolean("localSubmission")
+                && (!payload.optString("agent").equals(item.optString("agent"))
+                    || !payload.optString("sessionId").equals(item.optString("sessionId")))) continue;
             String id = item.optString("id", item.optString("messageId", "row-" + i));
-            rows.add(new Row("activity".equals(type) ? activityKey(item, id) : type + ":" + id, type, item));
+            String key = "activity".equals(type) ? activityKey(item, id)
+                : "message".equals(type) && item.optBoolean("localSubmission") ? "local-request:" + JSONObject.quote(id) : type + ":" + id;
+            rows.add(new Row(key, type, item));
         }
         if (sessionWork != null) for (int i = 0; i < sessionWork.length(); i++) {
             JSONObject event = sessionWork.optJSONObject(i);
             if (event == null) continue;
             rows.add(new Row(activityKey(event, event.optString("id", "work-" + i)), "activity", event));
         }
-        if (chat && sessionWork != null && sessionWork.length() > 0) {
+        if (chat) {
             Collections.sort(rows, Comparator.comparingLong(row -> orderTime(row.value.opt("timestamp"))));
+            rows = withDayDividers(rows);
         }
         if (rows.isEmpty()) {
             String note = chat ? "No public messages loaded. History may be partial; this does not prove that no work occurred."
@@ -631,14 +642,34 @@ public final class TelegramSurface extends FrameLayout {
         for (Row row : rows) if ("activity".equals(row.type)) presentRevisions.add(expansionKey(row));
         expanded.retainAll(presentRevisions);
         adapter.notifyDataSetChanged();
-        if (chat && follow) list.post(this::jumpToLatest);
+        final String expectedIdentity = identity;
+        if (chat && follow) list.post(() -> { if (identity.equals(expectedIdentity)) jumpToLatest(); });
         else if (!changedConversation && !anchor.isEmpty()) {
             for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(anchor)) {
                 final int position = i;
-                list.post(() -> list.setSelectionFromTop(position, offset));
+                list.post(() -> { if (identity.equals(expectedIdentity)) list.setSelectionFromTop(position, offset); });
                 break;
             }
         } else if (changedConversation) list.setSelection(0);
+    }
+
+    /** Dates organize this conversation only; they never become messages or actions. */
+    private ArrayList<Row> withDayDividers(List<Row> content) {
+        ArrayList<Row> dated = new ArrayList<>();
+        String priorDay = null;
+        SimpleDateFormat keyFormat = new SimpleDateFormat("yyyy-MM-dd", Locale.ROOT);
+        DateFormat labelFormat = DateFormat.getDateInstance(DateFormat.FULL);
+        for (Row row : content) {
+            long millis = orderTime(row.value.opt("timestamp"));
+            String day = millis > 0 ? keyFormat.format(new Date(millis)) : "unavailable";
+            if (!day.equals(priorDay)) {
+                String label = millis > 0 ? labelFormat.format(new Date(millis)) : "Date unavailable";
+                dated.add(new Row("day:" + identity + ":" + day, "day", data("text", label)));
+                priorDay = day;
+            }
+            dated.add(row);
+        }
+        return dated;
     }
 
     private void renderPin() {
@@ -846,7 +877,11 @@ public final class TelegramSurface extends FrameLayout {
             .setNegativeButton("Cancel", null).show();
     }
 
-    private void messageOptions(JSONObject message) {
+    private void messageOptions(JSONObject message, JSONObject origin) {
+        if (!sameScope(origin)) {
+            toast("The conversation changed. Reopen this message in its original chat. Nothing was dispatched.");
+            return;
+        }
         String id = message.optString("id");
         if (id.isEmpty()) {
             toast("This record has no actionable message identity.");
@@ -854,22 +889,23 @@ public final class TelegramSurface extends FrameLayout {
         }
         ArrayList<String> labels = new ArrayList<>();
         ArrayList<Runnable> commands = new ArrayList<>();
-        option(labels, commands, "Formatted text and links", () -> emit("full", data("id", id)));
-        if (message.optBoolean("canReply")) {
+        boolean local = message.optBoolean("localSubmission");
+        option(labels, commands, local ? "Full original request" : "Formatted text and links", () -> emit("full", messageData(message)));
+        if (!local && message.optBoolean("canReply")) {
             option(labels, commands, "Reply", () -> emit("reply", data("id", id)));
         }
-        if (message.optBoolean("canPin")) {
+        if (!local && message.optBoolean("canPin")) {
             final boolean pinned = isPinned(id);
             option(labels, commands, pinned ? "Unpin" : "Pin message", () -> emit(pinned ? "unpin" : "pin", data("id", id)));
         }
         if (!message.optString("text").isEmpty()) {
-            option(labels, commands, "Copy full text", () -> emit("copy", data("id", id)));
-            option(labels, commands, "Share full text", () -> emit("share", data("id", id)));
+            option(labels, commands, "Copy full text", () -> emit("copy", messageData(message)));
+            option(labels, commands, "Share full text", () -> emit("share", messageData(message)));
         }
-        if (message.optBoolean("canRead")) {
+        if (!local && message.optBoolean("canRead")) {
             option(labels, commands, "Read aloud in the agent's approved voice", () -> emit("read", data("id", id)));
         }
-        JSONArray media = message.optJSONArray("media");
+        JSONArray media = local ? null : message.optJSONArray("media");
         if (media != null) for (int i = 0; i < media.length(); i++) {
             JSONObject item = media.optJSONObject(i);
             if (item == null) continue;
@@ -882,14 +918,14 @@ public final class TelegramSurface extends FrameLayout {
                 else toast(unavailableReason);
             });
         }
-        if (!message.optString("replyToId").isEmpty()) {
+        if (!local && !message.optString("replyToId").isEmpty()) {
             option(labels, commands, "Show linked readable message", () -> gotoMessage(message.optString("replyToId")));
         }
         if (labels.isEmpty()) {
             toast("This record has no readable text or playable attachment. Delivery remains incomplete.");
             return;
         }
-        new AlertDialog.Builder(getContext()).setTitle("Message actions")
+        new AlertDialog.Builder(getContext()).setTitle(local ? "Original local request" : "Message actions")
             .setItems(labels.toArray(new String[0]), (dialog, which) -> commands.get(which).run()).show();
     }
 
@@ -909,7 +945,7 @@ public final class TelegramSurface extends FrameLayout {
         }
         for (int i = 0; (actionScope == null || sameScope(actionScope)) && i < adapter.rows.size(); i++) {
             Row row = adapter.rows.get(i);
-            if (id.equals(row.value.optString("id"))) {
+            if (!row.value.optBoolean("localSubmission") && id.equals(row.value.optString("id"))) {
                 list.smoothScrollToPositionFromTop(i, dp(12));
                 return;
             }
@@ -925,7 +961,7 @@ public final class TelegramSurface extends FrameLayout {
         }
         if (id.equals(lastFocusMessage)) return;
         for (int i = 0; i < adapter.rows.size(); i++) {
-            if (id.equals(adapter.rows.get(i).value.optString("id"))) {
+            if (!adapter.rows.get(i).value.optBoolean("localSubmission") && id.equals(adapter.rows.get(i).value.optString("id"))) {
                 final int position = i;
                 final String expectedIdentity = identity;
                 lastFocusMessage = id;
@@ -959,20 +995,36 @@ public final class TelegramSurface extends FrameLayout {
         @Override public Object getItem(int position) { return rows.get(position); }
         @Override public long getItemId(int position) { return stableId(rows.get(position).key); }
         @Override public boolean hasStableIds() { return true; }
-        @Override public int getViewTypeCount() { return 5; }
+        @Override public boolean areAllItemsEnabled() { return false; }
+        @Override public boolean isEnabled(int position) {
+            String type = rows.get(position).type;
+            return !"day".equals(type) && !"empty".equals(type);
+        }
+        @Override public int getViewTypeCount() { return 6; }
         @Override public int getItemViewType(int position) {
             String type = rows.get(position).type;
-            return "message".equals(type) ? 0 : "activity".equals(type) ? 1 : "agent".equals(type) ? 2 : "older".equals(type) ? 3 : 4;
+            return "message".equals(type) ? 0 : "activity".equals(type) ? 1 : "agent".equals(type) ? 2 : "older".equals(type) ? 3 : "day".equals(type) ? 5 : 4;
         }
 
         @Override public View getView(int position, View recycled, ViewGroup parent) {
             Row row = rows.get(position);
-            String fingerprint = row.key + row.value.toString() + appScale + ":" + nativeFontScale + expanded.contains(expansionKey(row)) + isPinned(row.value.optString("id"));
+            boolean outgoing = row.value.optBoolean("localSubmission") || "user".equals(row.value.optString("role"));
+            String fingerprint = identity + row.key + row.value.toString() + appScale + ":" + nativeFontScale
+                + expanded.contains(expansionKey(row)) + isPinned(row.value.optString("id"))
+                + ("message".equals(row.type) ? ":" + adjacentMessage(position, -1, outgoing) + ":" + adjacentMessage(position, 1, outgoing) : "");
             if (recycled != null && fingerprint.equals(recycled.getTag())) return recycled;
             View result;
             if ("message".equals(row.type)) result = messageRow(row, position);
             else if ("activity".equals(row.type)) result = activityRow(row);
             else if ("agent".equals(row.type)) result = agentRow(row);
+            else if ("day".equals(row.type)) {
+                TextView day = text(12, SECONDARY, true);
+                day.setText(row.value.optString("text", "Date unavailable"));
+                day.setContentDescription("Conversation date: " + day.getText());
+                day.setGravity(Gravity.CENTER);
+                day.setPadding(dp(10), dp(10), dp(10), dp(6));
+                result = day;
+            }
             else if ("older".equals(row.type)) {
                 TextView older = text(13, ACCENT, true);
                 older.setText("Load older messages");
@@ -1023,7 +1075,10 @@ public final class TelegramSurface extends FrameLayout {
 
     private View messageRow(Row row, int position) {
         JSONObject message = row.value;
-        boolean outgoing = "user".equals(message.optString("role"));
+        final boolean local = message.optBoolean("localSubmission");
+        final JSONObject origin = scope();
+        final String actionTag = local ? "telegram-local-" : "telegram-";
+        boolean outgoing = local || "user".equals(message.optString("role"));
         LinearLayout outer = vertical();
         outer.setGravity(outgoing ? Gravity.END : Gravity.START);
         outer.setPadding(outgoing ? dp(24) : dp(2), dp(3), outgoing ? dp(2) : dp(24), dp(3));
@@ -1036,34 +1091,45 @@ public final class TelegramSurface extends FrameLayout {
 
         String kind = message.optString("kind");
         String role = outgoing ? "You" : payload.optString("name", "Agent");
-        if (isPinned(message.optString("id"))) role += " · Pinned";
-        if (!kind.isEmpty()) role += " · " + kind;
+        if (!local && isPinned(message.optString("id"))) role += " · Pinned";
+        if (local) role += " · Local request";
+        else if (!kind.isEmpty()) role += " · " + kind;
         TextView author = text(11, ACCENT, true);
         author.setText(role);
         bubble.addView(author);
 
         String fullText = message.optString("text");
         TextView content = text(16, TEXT, false);
-        content.setText(fullText.isEmpty() ? "Readable report text unavailable. An attachment does not prove a companion text reply." : fullText);
-        content.setTextColor(fullText.isEmpty() ? WARNING : TEXT);
+        content.setText(fullText.isEmpty() ? local ? message.optString("attachmentNote", "Attachment submission · contents not attested")
+            : "Readable report text unavailable. An attachment does not prove a companion text reply." : fullText);
+        content.setTextColor(fullText.isEmpty() && !local ? WARNING : TEXT);
         content.setTextIsSelectable(true);
         content.setPadding(0, dp(4), 0, dp(5));
         content.setOnLongClickListener(v -> {
-            messageOptions(message);
+            messageOptions(message, origin);
             return true;
         });
         bubble.addView(content);
+        if (local) {
+            TextView admission = text(12, SECONDARY, false);
+            admission.setTag("telegram-local-submission-" + message.optString("id"));
+            admission.setText(submissionNote(message));
+            admission.setTextIsSelectable(true);
+            admission.setPadding(0, dp(2), 0, dp(5));
+            bubble.addView(admission);
+        }
         if (message.optBoolean("truncated") || message.optBoolean("fullAvailable")) {
             TextView limited = text(12, WARNING, false);
-            limited.setText("Native preview is bounded; open the full exact message below.");
+            limited.setText(local ? "Original request preview is bounded; open its full exact body below."
+                : "Native preview is bounded; open the full exact message below.");
             bubble.addView(limited);
-            Button full = button("Show full message", "Open complete readable text for this exact message");
-            full.setTag("telegram-full-" + message.optString("id"));
-            full.setOnClickListener(v -> emit("full", data("id", message.optString("id"))));
+            Button full = button(local ? "Show full original request" : "Show full message", "Open complete readable text for this exact message");
+            full.setTag(actionTag + "full-" + message.optString("id"));
+            full.setOnClickListener(v -> emitMessage("full", message, origin));
             bubble.addView(full);
         }
 
-        JSONArray media = message.optJSONArray("media");
+        JSONArray media = local ? null : message.optJSONArray("media");
         if (media != null) for (int i = 0; i < media.length(); i++) {
             JSONObject item = media.optJSONObject(i);
             if (item == null) continue;
@@ -1075,24 +1141,25 @@ public final class TelegramSurface extends FrameLayout {
             mediaButton.setTextColor(available ? ACCENT : WARNING);
             mediaButton.setTag("telegram-media-" + message.optString("id") + "-" + index);
             mediaButton.setOnClickListener(v -> {
-                if (available) emit("media", mediaData(message.optString("id"), index));
+                if (!sameScope(origin)) { toast("The conversation changed. Nothing was played."); return; }
+                if (available) withScope(origin, () -> emit("media", mediaData(message.optString("id"), index)));
                 else toast(unavailableReason);
             });
             bubble.addView(mediaButton, new LinearLayout.LayoutParams(-1, -2));
         }
         String replyTo = message.optString("replyToId");
-        if (!replyTo.isEmpty()) {
+        if (!local && !replyTo.isEmpty()) {
             Button linked = button("Show linked text", "Navigate to independently readable linked message");
-            linked.setOnClickListener(v -> gotoMessage(replyTo));
+            linked.setOnClickListener(v -> { if (sameScope(origin)) withScope(origin, () -> gotoMessage(replyTo)); });
             bubble.addView(linked);
         }
-        if (message.optBoolean("canRead")) {
+        if (!local && message.optBoolean("canRead")) {
             Button read = button("Read aloud", "Deliberately read this exact public message in its agent's approved voice");
             read.setTag("telegram-read-" + message.optString("id"));
-            read.setOnClickListener(v -> emit("read", data("id", message.optString("id"))));
+            read.setOnClickListener(v -> emitMessage("read", message, origin));
             bubble.addView(read);
         }
-        String delivery = delivery(message.opt("delivery"));
+        String delivery = local ? "" : delivery(message.opt("delivery"));
         if (!delivery.isEmpty()) {
             TextView receipt = text(11, SECONDARY, false);
             receipt.setText(delivery);
@@ -1103,13 +1170,13 @@ public final class TelegramSurface extends FrameLayout {
         TextView stamp = text(11, SECONDARY, false);
         stamp.setText(time(message.opt("timestamp")));
         meta.addView(stamp, new LinearLayout.LayoutParams(0, -2, 1));
-        Button menu = button("⋮", "Reply, pin, copy and media actions");
-        menu.setTag("telegram-message-actions-" + message.optString("id"));
-        menu.setOnClickListener(v -> messageOptions(message));
+        Button menu = button("⋮", local ? "Full original request, copy and share actions" : "Reply, pin, copy and media actions");
+        menu.setTag(actionTag + "message-actions-" + message.optString("id"));
+        menu.setOnClickListener(v -> messageOptions(message, origin));
         meta.addView(menu, new LinearLayout.LayoutParams(dp(40), -2));
         bubble.addView(meta);
         outer.setOnLongClickListener(v -> {
-            messageOptions(message);
+            messageOptions(message, origin);
             return true;
         });
         return outer;
@@ -1119,7 +1186,7 @@ public final class TelegramSurface extends FrameLayout {
         int other = position + direction;
         if (other < 0 || other >= adapter.rows.size()) return false;
         Row row = adapter.rows.get(other);
-        return "message".equals(row.type) && outgoing == "user".equals(row.value.optString("role"));
+        return "message".equals(row.type) && outgoing == (row.value.optBoolean("localSubmission") || "user".equals(row.value.optString("role")));
     }
 
     private View activityRow(Row row) {
@@ -1243,12 +1310,23 @@ public final class TelegramSurface extends FrameLayout {
         try {
             if ("openChat".equals(action)) data.put("sourceAgent", origin.optString("agent"));
             else data.put("agent", origin.optString("agent"));
+            data.put("sessionKey", origin.optString("sessionKey"));
             data.put("sessionId", origin.optString("sessionId"));
             if ("stop".equals(action) || "send".equals(action) && "steer".equals(data.optString("mode"))) {
                 data.put("runId", origin.optString("runId"));
             }
         } catch (JSONException ignored) { }
         actions.send(action, data);
+    }
+
+    private void emitMessage(String action, JSONObject message, JSONObject origin) {
+        if (!sameScope(origin)) {
+            toast("The conversation changed. Reopen this message in its original chat. Nothing was dispatched.");
+            return;
+        }
+        if (message.optBoolean("localSubmission")
+            && !"full".equals(action) && !"copy".equals(action) && !"share".equals(action)) return;
+        withScope(origin, () -> emit(action, messageData(message)));
     }
 
     private void showText(String heading, String value) {
@@ -1427,6 +1505,7 @@ public final class TelegramSurface extends FrameLayout {
         JSONObject result = data("agent", payload.optString("agent"));
         try {
             result.put("sessionId", payload.optString("sessionId"));
+            result.put("sessionKey", payload.optString("sessionKey"));
             result.put("runId", payload.optString("controlRunId"));
         } catch (JSONException ignored) { }
         return result;
@@ -1434,6 +1513,7 @@ public final class TelegramSurface extends FrameLayout {
 
     private boolean sameScope(JSONObject origin) {
         return origin.optString("agent").equals(payload.optString("agent"))
+            && origin.optString("sessionKey").equals(payload.optString("sessionKey"))
             && origin.optString("sessionId").equals(payload.optString("sessionId"));
     }
 
@@ -1475,6 +1555,27 @@ public final class TelegramSurface extends FrameLayout {
         return result;
     }
 
+    private static JSONObject messageData(JSONObject message) {
+        JSONObject result = data("id", message.optString("id"));
+        if (message.optBoolean("localSubmission")) {
+            try { result.put("localSubmission", true); } catch (JSONException ignored) { }
+        }
+        return result;
+    }
+
+    private static String submissionNote(JSONObject message) {
+        String label;
+        switch (message.optString("submissionState")) {
+            case "pending": label = "Submission pending"; break;
+            case "accepted": label = "Submission accepted · admission only"; break;
+            case "rejected": label = "Submission rejected"; break;
+            case "uncertain": label = "Submission outcome uncertain"; break;
+            default: label = "Submission state unavailable";
+        }
+        String note = message.optString("submissionNote");
+        return label + (note.isEmpty() ? "" : " · " + note);
+    }
+
     private static void append(StringBuilder builder, String line) {
         if (builder.length() > 0) builder.append('\n');
         builder.append(line);
@@ -1491,29 +1592,27 @@ public final class TelegramSurface extends FrameLayout {
     }
 
     private static String time(Object value) {
-        if (value == null || value == JSONObject.NULL) return "Time unavailable";
-        if (value instanceof Number) {
-            long millis = ((Number) value).longValue();
-            if (millis < 100000000000L) millis *= 1000;
-            return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(millis));
-        }
-        String text = String.valueOf(value);
-        if (text.matches("[0-9]{10,16}")) try { return time(Long.parseLong(text)); } catch (NumberFormatException ignored) { }
-        return text;
+        long millis = orderTime(value);
+        return millis > 0 ? DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(millis)) : "Time unavailable";
     }
 
     private static long orderTime(Object value) {
         if (value instanceof Number) {
+            double numeric = ((Number) value).doubleValue();
+            if (Double.isNaN(numeric) || Double.isInfinite(numeric) || numeric <= 0 || numeric > 8640000000000000L) return 0;
             long millis = ((Number) value).longValue();
             return millis < 100000000000L ? millis * 1000 : millis;
         }
         if (value instanceof String) {
             try { return orderTime(Long.parseLong((String) value)); } catch (NumberFormatException ignored) { }
-            String[] formats = {"yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX"};
-            for (String format : formats) try {
-                Date date = new java.text.SimpleDateFormat(format, Locale.ROOT).parse((String) value);
-                if (date != null) return date.getTime();
-            } catch (java.text.ParseException ignored) { }
+            String[] formats = {"yyyy-MM-dd'T'HH:mm:ss.SSSXXX", "yyyy-MM-dd'T'HH:mm:ssXXX", "yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX"};
+            for (String format : formats) {
+                SimpleDateFormat parser = new SimpleDateFormat(format, Locale.ROOT);
+                parser.setLenient(false);
+                ParsePosition position = new ParsePosition(0);
+                Date date = parser.parse((String) value, position);
+                if (date != null && position.getIndex() == ((String) value).length() && date.getTime() > 0) return date.getTime();
+            }
         }
         return 0;
     }

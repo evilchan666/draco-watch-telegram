@@ -174,7 +174,7 @@ try{
   await act('send',{mode:'send',text:await evaluate('__last.draft')});
   await expect('__requests.filter(r=>r.path==="/v1/message").length===2&&!__requests.filter(r=>r.path==="/v1/message").at(-1).body.replyToId&&__requests.filter(r=>r.path==="/v1/message").at(-1).body.sessionId==="physical:atlas:v2"','a deliberate new-session send never carries the previous session reply target');
   await evaluate('const sent=__requests.filter(r=>r.path==="/v1/message").at(-1);onDracoResponse({id:sent.id,ok:true,data:{status:"queued"}})');await pause(100);
-  await expect('__last.draft===""&&__last.outbox.at(-1).state==="accepted"&&__last.outbox.at(-1).note.includes("queued")','exact-ID acceptance clears only the matching native draft and stays an admission receipt');
+  await expect('__last.draft===""&&__last.messages.some(m=>m.id===__requests.filter(r=>r.path==="/v1/message").at(-1).id&&m.localSubmission===true&&m.text===__requests.filter(r=>r.path==="/v1/message").at(-1).body.text&&m.submissionState==="accepted"&&m.submissionNote.includes("queued follow-up"))&&!__last.outbox.some(o=>o.id===__requests.filter(r=>r.path==="/v1/message").at(-1).id)','exact-ID acceptance clears only the matching native draft and retains the accepted original body as an admission-labelled message, not a duplicate outbox receipt');
   await act('draft',{text:'x'.repeat(17000)});
   await expect('__last.draft.length<=16000&&__last.draft===JSON.parse(localStorage.getItem("draco-watch-client-v2")).drafts.atlas','native draft length uses the same durable 16000-character bound as the existing composer');
   await evaluate('__act("draft",{text:""});__act("openChat",{agent:"forge"})');await pause(120);

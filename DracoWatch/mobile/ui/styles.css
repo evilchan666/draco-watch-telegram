@@ -308,6 +308,12 @@ body[data-view=environment].environment-compact .nav-button { min-height: 48px; 
 .message { max-width: 94%; background: #141414; border: 1px solid #535353; border-left: 3px solid var(--selected); border-radius: 12px; padding: 9px 11px; align-self: flex-start; min-width: 100px; content-visibility: auto; contain-intrinsic-size: auto 220px; }
 .message.user { background: color-mix(in srgb, var(--selected) 7%, #151515); border: 1px solid color-mix(in srgb, var(--selected) 55%, #555); align-self: flex-end; }
 .message.pending { border-style: dashed; }
+.message.local-request.uncertain, .message.local-request.rejected { border-style: dashed; }
+.conversation-day { align-self: center; max-width: 100%; padding: 4px 10px; border-radius: 12px; background: #202020; color: #ddd; font-size: .75rem; line-height: 1.4; text-align: center; overflow-wrap: anywhere; }
+.submission-admission { margin-top: 7px; }
+.request-custody { margin-top: 5px; font-size: .75rem; color: #bbb; }
+.request-custody summary { cursor: pointer; min-height: var(--touch); display: flex; align-items: center; }
+.request-custody > button { min-height: var(--touch); }
 .message-heading { position: relative; display: flex; align-items: center; gap: 8px; min-height: 28px; margin-bottom: 3px; padding-right: calc(var(--touch) + 4px); font-size: .75rem; color: #ddd; }
 .message-heading strong { color: var(--selected); font-size: .75rem; }
 .message.user .message-heading strong { color: #fff; }

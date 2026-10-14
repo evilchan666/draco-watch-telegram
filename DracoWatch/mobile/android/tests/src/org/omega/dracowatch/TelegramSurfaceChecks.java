@@ -20,7 +20,10 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Changed native Telegram-derived surface only. The target must be unpaired.
@@ -81,6 +84,26 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private View row(int position) throws Exception {
         ListView list=timeline();return ui(() -> list.getAdapter().getView(position,null,list));
     }
+    private View rowForKey(String key) throws Exception {
+        ListView list=timeline();
+        for(int i=0;i<ui(()->list.getAdapter().getCount());i++){
+            View candidate=row(i);
+            if(key.equals(candidate.getTag(TelegramSurface.TAG_ROW_KEY)))return candidate;
+        }
+        throw new AssertionError("Missing exact native row " + key);
+    }
+    private View messageRow(String id) throws Exception {return rowForKey("message:"+id);}
+    private View localRow(String id) throws Exception {return rowForKey("local-request:"+JSONObject.quote(id));}
+    private Map<String,Long> dayRows() throws Exception {
+        ListView list=timeline();Map<String,Long> result=new HashMap<>();
+        for(int i=0;i<ui(()->list.getAdapter().getCount());i++){
+            final int position=i;View view=row(i);String key=String.valueOf(view.getTag(TelegramSurface.TAG_ROW_KEY));
+            if(!key.startsWith("day:"))continue;
+            check(!ui(()->list.getAdapter().isEnabled(position))&&!view.hasOnClickListeners(),"date divider is non-actionable");
+            result.put(key,ui(()->list.getAdapter().getItemId(position)));
+        }
+        return result;
+    }
     private TextView exactText(View root,String text) {for(View item:descendants(root))if(item instanceof TextView&&text.equals(((TextView)item).getText().toString()))return (TextView)item;return null;}
     private int classCount(View root,String className){int count=0;for(View v:descendants(root))if(className.equals(v.getClass().getName()))count++;return count;}
     private boolean backgroundClass(View root,String className){for(View v:descendants(root))if(v.getBackground()!=null&&className.equals(v.getBackground().getClass().getName()))return true;return false;}
@@ -109,6 +132,73 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         if(event==null)return false;JSONObject data=event.optJSONObject("data");if(data==null)return false;
         return agent.equals(data.optString("agent"))&&("physical-"+agent).equals(data.optString("sessionId"));
     }
+    private void localRequestsAndDates() throws Exception {
+        Calendar day=Calendar.getInstance();day.clear();day.set(2026,Calendar.OCTOBER,14,0,0,0);
+        long midnight=day.getTimeInMillis();String original="Original device-local request\nKeep the exact second line.";
+        JSONObject model=base(true,"atlas");
+        JSONObject local=json("id","same-id","agent","atlas","sessionId","physical-atlas","role","user","kind","Local request",
+            "localSubmission",true,"text",original,"timestamp",midnight+300000,"submissionState","accepted",
+            "submissionNote","Queued admission is not a read, start or completion receipt.","fullAvailable",true,
+            // Malformed extra public flags must not grant a local request actions.
+            "canPin",true,"canReply",true,"canRead",true,"replyToId","m1","delivery","FALSE PUBLIC DELIVERY",
+            "media",new JSONArray().put(json("index",0,"label","False local media","available",true)));
+        model.put("messages",new JSONArray()
+            .put(local)
+            .put(json("id","after","role","assistant","text","New-day public text","timestamp",midnight+3600000))
+            .put(json("id","same-id","role","assistant","text","Independent public row with the same ID","timestamp",midnight-300000))
+            .put(json("id","attachment-only","agent","atlas","sessionId","physical-atlas","role","user","localSubmission",true,"text","","timestamp",midnight+600000,
+                "submissionState","pending","attachmentNote","Attachment submission · 2 device-saved attachment IDs; delivery contents not attested"))
+            .put(json("id","unknown-time","role","assistant","text","Undated observation","timestamp","2026-99-14T00:00:00Z")));
+        model.getJSONArray("messages").put(json("id","zero-time","role","assistant","text","Missing timestamp observation","timestamp",0));
+        model.put("work",new JSONArray().put(json("id","work-midnight","agent","atlas","sessionId","physical-atlas",
+            "kind","Tool returned","text","Same-day observed result","timestamp",midnight+120000,"revision","fixture-revision")));
+        model.put("pins",new JSONArray().put(json("messageId","same-id","text","Independent public pin")));
+        render(model);
+        View localView=localRow("same-id");TextView body=ui(()->exactText(localView,original));
+        TextView admission=(TextView)ui(()->localView.findViewWithTag("telegram-local-submission-same-id"));
+        check(body!=null&&body.isTextSelectable(),"exact multiline original request body is directly readable and selectable");
+        check(admission!=null&&admission.getText().toString().startsWith("Submission accepted · admission only"),"local admission is a neutral separate state, not completion");
+        check(descendants(localView).indexOf(body)<descendants(localView).indexOf(admission),"local admission appears after the original body");
+        check(exactText(localView,"You · Local request")!=null&&exactText(localView,"FALSE PUBLIC DELIVERY")==null,"same-ID public pin/delivery cannot grant local public-history status");
+        check(ui(()->localView.findViewWithTag("telegram-read-same-id"))==null&&ui(()->localView.findViewWithTag("telegram-media-same-id-0"))==null,
+            "local request cannot expose speech or media despite malformed capability flags");
+        check(exactText(messageRow("same-id"),"Independent public row with the same ID")!=null,"same-ID local and public rows both remain distinct");
+        check(exactText(messageRow("zero-time"),"Time unavailable")!=null && exactText(messageRow("unknown-time"),"Time unavailable")!=null,
+            "zero and invalid timestamps never invent an epoch date below unavailable-date dividers");
+        check(exactText(localRow("attachment-only"),"Attachment submission · 2 device-saved attachment IDs; delivery contents not attested")!=null,
+            "empty-text local attachment request is not called an unavailable agent report");
+        String[] states={"pending","rejected","uncertain","not-a-known-state"};
+        String[] labels={"Submission pending","Submission rejected","Submission outcome uncertain","Submission state unavailable"};
+        for(int i=0;i<states.length;i++){
+            local.put("submissionState",states[i]);render(model);
+            View updated=localRow("same-id");TextView note=(TextView)updated.findViewWithTag("telegram-local-submission-same-id");
+            check(exactText(updated,original)!=null&&note.getText().toString().startsWith(labels[i]),"submission state "+states[i]+" never replaces the original body");
+        }
+        local.put("submissionState","accepted");render(model);
+        Map<String,Long> dates=dayRows();check(dates.size()==3,"two chronological local days plus explicit unavailable date are separate");
+        ListView list=timeline();List<String> ordered=new ArrayList<>();
+        for(int i=0;i<ui(()->list.getAdapter().getCount());i++)ordered.add(String.valueOf(row(i).getTag(TelegramSurface.TAG_ROW_KEY)));
+        check("older".equals(ordered.get(0))&&ordered.indexOf("message:same-id")<ordered.indexOf("local-request:"+JSONObject.quote("same-id"))
+            &&ordered.indexOf("local-request:"+JSONObject.quote("same-id"))<ordered.indexOf("message:after"),"day dividers preserve older control and chronological request/public row order");
+        check(ordered.indexOf("activity:"+JSONObject.quote("atlas")+":"+JSONObject.quote("physical-atlas")+":"+JSONObject.quote("work-midnight"))
+            <ordered.indexOf("local-request:"+JSONObject.quote("same-id")),"work and local requests share the same chronological date sequence");
+        render(new JSONObject(model.toString()));check(dates.equals(dayRows()),"unchanged refresh preserves exact date divider identities");
+        int beforeFull=actions.size();click(ui(()->localRow("same-id").findViewWithTag("telegram-local-full-same-id")));
+        JSONObject full=event(beforeFull,"full");check(exactScope(full,"atlas")&&full.getJSONObject("data").optBoolean("localSubmission")
+            &&"same-id".equals(full.getJSONObject("data").optString("id")),"full original request routes exact local ID instead of same-ID public row");
+        click(ui(()->localRow("same-id").findViewWithTag("telegram-local-message-actions-same-id")));
+        check(findNode("Reply")==null&&findNode("Pin message")==null&&findNode("Unpin")==null
+            &&findNode("Read aloud in the agent's approved voice")==null&&findNode("Open False local media")==null,"local action menu hard-denies reply/pin/read/media");
+        int beforeCopy=actions.size();dialogChoice("Copy full text");JSONObject copied=event(beforeCopy,"copy");
+        check(exactScope(copied,"atlas")&&copied.getJSONObject("data").optBoolean("localSubmission"),"local Copy carries exact local-body discriminator");
+        View staleFull=ui(()->localRow("same-id").findViewWithTag("telegram-local-full-same-id"));
+        click(ui(()->localRow("same-id").findViewWithTag("telegram-local-message-actions-same-id")));
+        JSONObject replaced=new JSONObject(model.toString());replaced.put("sessionId","physical-atlas-new").put("sessionKey","fixture:atlas:new");
+        render(replaced);int beforeStale=actions.size();dialogChoice("Copy full text");click(staleFull);
+        check(actions.size()==beforeStale,"session replacement cannot carry stale local full/copy actions into a successor conversation");
+        check(!dates.keySet().equals(dayRows().keySet()),"date row identities are scoped to replaced physical/logical conversation");
+        render(base(true,"atlas"));
+    }
     private int dp(float value){return Math.round(value*activity.getResources().getDisplayMetrics().density);}
     private void readableControl(String id,Rect root,String label)throws Exception{
         View view=requireTag(id);if(!ui(()->view.isShown()))return;
@@ -129,7 +219,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(bounds.width()>0&&bounds.height()>0&&bounds.left>=root.left-1&&bounds.right<=root.right+1&&bounds.top>=root.top-1&&bounds.bottom<=root.bottom+1,label+" "+id+" remains visible inside viewport");
         }
         ListView list=timeline();View compose=requireTag("telegram-composer");EditText draft=(EditText)requireTag("telegram-draft");
-        TextView report=ui(()->exactText(row(1),LONG_TEXT));check(report!=null,label+" measures actual full-message typography");
+        TextView report=ui(()->exactText(messageRow("m1"),LONG_TEXT));check(report!=null,label+" measures actual full-message typography");
         int listHeight=ui(()->list.getHeight()),usable=ui(()->list.getHeight()-list.getPaddingTop()-list.getPaddingBottom()),line=ui(()->report.getLineHeight()),composerHeight=ui(()->compose.getHeight());
         android.util.Log.i("DracoTelegramCheck","LAYOUT "+label+" root="+root.height()+" timeline="+listHeight+" usable="+usable+" messageLine="+line+" composer="+composerHeight+" draft="+ui(()->draft.getHeight()));
         boolean shortHeight=root.height()<dp(480);int usefulMinimum=shortHeight?Math.max(dp(64),Math.min(2*line,(int)Math.floor(root.height()*.28))):Math.max(dp(120),3*line);
@@ -156,10 +246,11 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             ImageView back=(ImageView)requireTag("telegram-back");check(ui(()->back.getDrawable().getClass().getName()).equals("org.omega.dracowatch.telegram.BackDrawable"),"actual Telegram navigation drawable is in use");
             check(ui(()->timeline().getAdapter().getCount())==6,"native conversation roster contains all six agents");
             for(int i=0;i<AGENTS.length;i++){int from=actions.size();View agentRow=row(i);click(agentRow);JSONObject opened=event(from,"openChat");check(opened!=null&&AGENTS[i].equals(opened.getJSONObject("data").optString("agent")),"native roster navigates exact agent "+AGENTS[i]);}
-            render(base(true,"atlas"));View message=row(1);assertLayout("100 percent app scale");
+            render(base(true,"atlas"));View message=messageRow("m1");assertLayout("100 percent app scale");
             check(ui(()->backgroundClass(message,"org.omega.dracowatch.telegram.MessageDrawable")),"message cell uses actual Telegram bubble path renderer");
             TextView full=ui(()->exactText(message,LONG_TEXT));check(full!=null&&ui(()->full.isTextSelectable()),"full exact public message is selectable, not preview-only");
             check(ui(()->full.getEllipsize())==null&&ui(()->full.getMaxLines())>1000,"full report is not visually ellipsized or line-clamped");
+            localRequestsAndDates();
             check(ui(()->requireTag("telegram-pinned-banner").getVisibility())==View.VISIBLE,"native pin banner is visible with retained pins");
             int beforeDraft=actions.size();EditText draft=(EditText)requireTag("telegram-draft");ui(()->{draft.requestFocus();draft.setText("EXACT NEW SYNTHETIC DRAFT\nKeep every character.");return null;});
             JSONObject draftEvent=event(beforeDraft,"draft");check(exactScope(draftEvent,"atlas")&&draftEvent.getJSONObject("data").optString("text").equals(draft.getText().toString()),"native draft callback keeps exact text and physical-session scope");
@@ -182,10 +273,10 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             int beforeGoto=actions.size();click(requireTag("telegram-pin-options"));dialogChoice("Open this pin");JSONObject gotoEvent=event(beforeGoto,"goto");check(exactScope(gotoEvent,"atlas")&&"not-loaded".equals(gotoEvent.getJSONObject("data").optString("id")),"unloaded pin navigation preserves exact message/session target");
             click(requireTag("telegram-pin-options"));dialogChoice("Pin history");check(findNode("Pin history · this conversation")!=null,"native pin history dialog is readable");dialogChoice("Close");
             int beforeUnpin=actions.size();click(requireTag("telegram-pin-options"));dialogChoice("Unpin this message");JSONObject unpin=event(beforeUnpin,"unpin");check(exactScope(unpin,"atlas")&&"not-loaded".equals(unpin.getJSONObject("data").optString("id")),"native Unpin targets the selected exact-scope message");
-            int beforePin=actions.size();View unpinnedMenu=ui(()->row(2).findViewWithTag("telegram-message-actions-m2"));click(unpinnedMenu);dialogChoice("Pin message");JSONObject pin=event(beforePin,"pin");check(exactScope(pin,"atlas")&&"m2".equals(pin.getJSONObject("data").optString("id")),"native Pin action keeps exact selected message and physical session");
-            int beforeReply=actions.size();View replyMenu=ui(()->row(1).findViewWithTag("telegram-message-actions-m1"));click(replyMenu);dialogChoice("Reply");JSONObject replied=event(beforeReply,"reply");check(exactScope(replied,"atlas")&&"m1".equals(replied.getJSONObject("data").optString("id")),"native Reply action preserves original readable message identity");
+            int beforePin=actions.size();View unpinnedMenu=ui(()->messageRow("m2").findViewWithTag("telegram-message-actions-m2"));click(unpinnedMenu);dialogChoice("Pin message");JSONObject pin=event(beforePin,"pin");check(exactScope(pin,"atlas")&&"m2".equals(pin.getJSONObject("data").optString("id")),"native Pin action keeps exact selected message and physical session");
+            int beforeReply=actions.size();View replyMenu=ui(()->messageRow("m1").findViewWithTag("telegram-message-actions-m1"));click(replyMenu);dialogChoice("Reply");JSONObject replied=event(beforeReply,"reply");check(exactScope(replied,"atlas")&&"m1".equals(replied.getJSONObject("data").optString("id")),"native Reply action preserves original readable message identity");
             // Menu opened under one physical session must not retarget its old ID.
-            View menu=ui(()->row(1).findViewWithTag("telegram-message-actions-m1"));click(menu);render(base(true,"forge"));int beforeStale=actions.size();dialogChoice("Unpin");JSONObject stale=event(beforeStale,"unpin");check(stale==null||exactScope(stale,"atlas"),"stale message dialog cannot retarget old message into new agent/session");
+            View menu=ui(()->messageRow("m1").findViewWithTag("telegram-message-actions-m1"));click(menu);render(base(true,"forge"));int beforeStale=actions.size();dialogChoice("Unpin");JSONObject stale=event(beforeStale,"unpin");check(stale==null||exactScope(stale,"atlas"),"stale message dialog cannot retarget old message into new agent/session");
             JSONObject activityModel=base(false,"atlas");activityModel.put("view","activity");activityModel.put("activity",new JSONArray().put(json("id","work-1","agent","atlas","name","ATLAS","kind","Tool returned","text","Memory search returned 3 matches","timestamp",System.currentTimeMillis(),"revision","revision-a","detail","Exact owned run: fixture-run\nTool call: fixture-call\nResult: 3 matches; query withheld")));
             render(activityModel);click(requireTag("telegram-expand-work-1"));check(tag("telegram-evidence-work-1")!=null,"native operational event expands supplied same-revision evidence");
             render(new JSONObject(activityModel.toString()));check(tag("telegram-evidence-work-1")!=null,"unchanged native observation retains expanded detail");

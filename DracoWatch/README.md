@@ -13,8 +13,14 @@ the transport and custody authority. Chat, agent roster, pins and execution stre
 are native; Chamber, Environment and Settings retain their existing bundled views.
 Advanced dialogs temporarily reveal the retained bundled UI, rather than losing
 working controls. Pins are device-local, exact physical-session snapshots, not
-Telegram server pins. Only admitted public reports and owner-bound operational
-facts enter this renderer; private reasoning and raw tool payloads do not.
+Telegram server pins. Admitted public reports and owner-bound operational facts
+enter this renderer; exact device-local request bodies remain separately labelled
+as local admission custody, never public attestation or completion. Private
+reasoning and raw tool payloads do not enter this renderer.
+
+The latest source-only [request/chronology repair](REQUEST-CHRONOLOGY-3474.md)
+has not been packaged or activated. SOURCE.json separately retains the previously
+packaged candidate's source pin and unverified physical acceptance.
 
 ## Build the unpaired candidate
 

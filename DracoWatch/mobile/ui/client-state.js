@@ -62,6 +62,49 @@
   const pinTitle = text => text.replace(/\s+/g,' ').trim().slice(0,PIN_LIMITS.title) || 'Attachment';
   const pinTime = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
   const toolKinds = {'Tool started':'start','Tool finished':'result','Tool failed':'error'};
+  // Local submission custody is not public history. Only an exact authenticated
+  // user request key AND unchanged original body can replace its visible row.
+  function localRequestRows(outbox,{agent,sessionId}={}) {
+    if (!pinTarget(agent,sessionId)) return [];
+    return (Array.isArray(outbox)?outbox:[]).filter(row=>row?.agent===agent && row.path==='/v1/message' &&
+      row.body?.agent===agent && row.body.sessionId===sessionId && pinId(row.id,160) && row.body.idempotencyKey===row.id &&
+      typeof row.body.text==='string' && row.body.text.length<=500000 && ['pending','accepted','uncertain','rejected'].includes(row.state))
+      .map(row=>{
+        const note=pinText(row.note,800),queued=row.outcome?.status==='queued'||row.outcome?.disposition==='queued';
+        const admission=({pending:'Sending · gateway admission not yet confirmed',
+          accepted:queued?'Gateway admitted · queued follow-up':'Gateway admission acknowledged',
+          uncertain:'Admission unconfirmed · original request saved',rejected:'Request rejected · admission not confirmed'})[row.state];
+        return {id:row.id,agent,sessionId,role:'user',kind:'Local request',text:row.body.text,
+          timestamp:pinTime(row.at)?row.at:0,localSubmission:true,submissionState:row.state,
+          submissionNote:admission+'. Reading, start, reply and completion are not established.'+
+            (['uncertain','rejected'].includes(row.state)&&note?' '+note:''),
+          attachmentNote:Array.isArray(row.body.attachmentIds)&&row.body.attachmentIds.length?
+            'Attachment submission · '+row.body.attachmentIds.length+' saved attachment IDs; delivered contents unconfirmed':'',
+          source:'device-local-submission',publicAttested:false,replyAvailable:false,canPin:false,canReply:false,canRead:false,media:[]};
+      });
+  }
+  function mergeConversation(history,outbox,{agent,sessionId}={}) {
+    if (!pinTarget(agent,sessionId)) return [];
+    const rows=(Array.isArray(history)?history:[]).filter(row=>row?.sessionId===sessionId &&
+      (row.agent===undefined||row.agent===agent) && row.publicAttested===true && row.source==='authenticated-native-history' &&
+      ['user','assistant'].includes(row.role) && pinId(row.id,1024) && typeof row.text==='string' && row.text.length<=500000)
+      .map(row=>({...row,timestamp:pinTime(row.timestamp)?row.timestamp:0}));
+    for (const local of localRequestRows(outbox,{agent,sessionId})) {
+      const keyed=rows.filter(row=>row.role==='user' && row.requestId===local.id);
+      // Excerpts, conflicting bodies or unkeyed legacy rows cannot prove that
+      // the complete submitted request has entered authenticated history.
+      if (keyed.length && keyed.every(row=>row.text===local.text && row.excerpt!==true)) continue;
+      rows.push(local);
+    }
+    return rows.sort((a,b)=>a.timestamp-b.timestamp || a.id.localeCompare(b.id) || Number(a.localSubmission===true)-Number(b.localSubmission===true));
+  }
+  function conversationDay(timestamp) {
+    if (!pinTime(timestamp)||timestamp===0) return {key:'undated',label:'Date not recorded'};
+    const value=new Date(timestamp);
+    if (!Number.isFinite(value.getTime())) return {key:'undated',label:'Date not recorded'};
+    return {key:value.getFullYear()+'-'+String(value.getMonth()+1).padStart(2,'0')+'-'+String(value.getDate()).padStart(2,'0'),
+      label:value.toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short',year:'numeric'})};
+  }
   function pinIdentity(row) {
     if (!row || !pinTarget(row.agent,row.sessionId) || !pinId(row.messageId)) return null;
     const source=row.source,kind=pinText(row.kind,80);
@@ -191,5 +234,5 @@
     }
     preferences(patch) { Object.assign(this.data.preferences,patch);if (![.5,.75,1,1.25,1.5,2].includes(this.data.preferences.playbackRate)) this.data.preferences.playbackRate=1;this.save();return this.data.preferences; }
   }
-  window.DracoState = {ClientState,AGENTS,KEY,PIN_LIMITS,occupancyLabel,conversationTarget,runObservation};
+  window.DracoState = {ClientState,AGENTS,KEY,PIN_LIMITS,occupancyLabel,conversationTarget,runObservation,localRequestRows,mergeConversation,conversationDay};
 })();

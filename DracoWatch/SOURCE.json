@@ -1,5 +1,5 @@
 {
-  "watchSource": "0ef673a142b389ef4c378c5087ea6b2a4eff86d5",
+  "watchSource": "7ffa5d86127b24661bc276ed57e75d2a59a01a50",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,
@@ -9,5 +9,8 @@
   "idleBubbleExpiryMs": 60000,
   "packagedCandidateWatchSource": "387e0ccaecc646610d8e0839c501fee5952b63df",
   "statusTruthDelta": "source only; Run open is occupancy, exact conversation observations do not prove current execution or waiting",
-  "newApkBuilt": false
+  "newApkBuilt": false,
+  "requestChronologyDelta": "source only; exact local original bodies, admission labels, same-scope keyed reconciliation, day dividers, safe coverage and latest-row indicator",
+  "currentOperation3254": "future producer contract; not serving, missing remains unobserved",
+  "newNativeChecks": "compiled only; new Android fixture runtime and physical acceptance unverified"
 }
