@@ -1,9 +1,10 @@
 {
-  "watchSource": "62c9f5edb04e55a469c5d1d3967bd447449cc519",
+  "watchSource": "6bd2b71e035fc274f48b179e43689397af985253",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,
   "updaterPublished": false,
   "physicalAcceptance": "unverified",
-  "taskProgressBackend": "staged separately in Watch source; not activated"
+  "taskProgressBackend": "staged separately in Watch source; not activated",
+  "idleBubbleExpiryMs": 60000
 }

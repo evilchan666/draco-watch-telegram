@@ -3,6 +3,7 @@
 'use strict';
 (() => {
   const MAX_AGE=15*60*1000,STATES=new Set(['active','idle','queued']);
+  const IDLE_EXPIRY_MS=60000,EXPIRY_KEY='draco-environment-idle-v1';
   const clamp=(value,min,max)=>Math.max(min,Math.min(max,value));
   const timestamp=value=>typeof value==='number'&&Number.isFinite(value)?(value<1e11?value*1000:value):typeof value==='string'?Date.parse(value):NaN;
   // Presentation only: bound work on fleet refreshes, retain authored messages
@@ -29,7 +30,7 @@
     if(live===true&&Number.isFinite(now))for(const message of Array.isArray(activity)?activity:[]){
       const agent=rows.get(message?.agent),time=timestamp(message?.timestamp);
       const attachment=message?.kind==='Attachment only'&&!message?.text?.trim()&&Array.isArray(message.media)&&message.media.length>0;
-      if(!agent||!STATES.has(agent.status)||typeof agent.sessionId!=='string'||!agent.sessionId||message.sessionId!==agent.sessionId||message.role!=='assistant'||['analysis','thinking','tool'].includes(message.channel)||typeof message.id!=='string'||!message.id||typeof message.text!=='string'||(!message.text.trim()&&!attachment)||message.private===true||message.audience==='private'||!Number.isFinite(time)||time<=0||time>now+60000)continue;
+      if(!agent||!STATES.has(agent.status)||typeof agent.sessionId!=='string'||!agent.sessionId||message.sessionId!==agent.sessionId||message.role!=='assistant'||['analysis','thinking','tool'].includes(message.channel)||message.receivedOnly===true||message.source==='authenticated-tool-status'||/^(?:Observed change|Tool started|Tool finished|Tool failed|Status receipt|Delivery receipt)$/i.test(message.kind||'')||typeof message.id!=='string'||!message.id||typeof message.text!=='string'||(!message.text.trim()&&!attachment)||message.private===true||message.audience==='private'||!Number.isFinite(time)||time<=0||time>now+60000)continue;
       const attachmentText=attachment?(message.media.some(item=>item.kind==='audio')?'Audio':'Attachment')+(message.media.some(item=>(!message.media.some(value=>value.kind==='audio')||item.kind==='audio')&&item.downloadAvailable===true)?' available':' unavailable in app')+' · no companion text':null;
       const prior=latest.get(message.agent);if(!prior||time>prior.timestamp)latest.set(message.agent,{sourceId:message.id,text:message.text,attachmentText,timestamp:time,sessionId:agent.sessionId});
     }
@@ -41,6 +42,51 @@
     });
   }
 
+  // Presentation custody only: six bounded identity/clock records, never text.
+  // Absolute deadlines survive refresh, hidden views and reconnect. No new timer:
+  // the existing fleet refresh evaluates expiry even when motion is disabled.
+  class IdleExpiry {
+    constructor({storage=null}={}) {
+      this.storage=storage;this.rows=new Map();this.saved='';
+      const validId=value=>typeof value==='string'&&value.length>0&&value.length<=512&&!/[\s\u0000-\u001f\u007f]/u.test(value);
+      this.validId=validId;this.agents=new Set(['main','forge','atlas','aera-new','vvv','daedalus']);
+      try{const raw=storage?.getItem(EXPIRY_KEY);if(raw?.length<=16384){const saved=JSON.parse(raw);if(saved?.version===1&&Array.isArray(saved.rows))for(const [id,row] of saved.rows.slice(0,6)){
+        if(!this.agents.has(id)||!row||!validId(row.sessionId)||!STATES.has(row.status)||![row.messageAt,row.speechAt,row.expiredThrough].every(value=>Number.isSafeInteger(value)&&value>=0)||!(row.idleSince===null||Number.isSafeInteger(row.idleSince)&&row.idleSince>=0)||!(row.messageId===null||validId(row.messageId))||!(row.expiredMessageId===null||validId(row.expiredMessageId)))continue;
+        this.rows.set(id,{sessionId:row.sessionId,status:row.status,idleSince:row.idleSince,messageId:row.messageId,messageAt:row.messageAt,speechAt:row.speechAt,expiredThrough:row.expiredThrough,expiredMessageId:row.expiredMessageId});
+      }}}catch{/* Unavailable/damaged optional presentation cache never affects chat. */}
+    }
+    expire(row,now) {
+      if(row?.idleSince!==null&&row?.idleSince!==undefined&&now>=Math.max(row.idleSince,row.speechAt)+IDLE_EXPIRY_MS){row.expiredThrough=Math.max(row.expiredThrough,row.messageAt);row.expiredMessageId=row.messageId;}
+    }
+    apply(reports,{now=Date.now()}={}) {
+      if(!Number.isSafeInteger(now)||now<0)return reports;
+      const output=reports.map(report=>{
+        if(!this.agents.has(report.id))return report;
+        let row=this.rows.get(report.id);this.expire(row,now);
+        // Unknown is not idle. Keep the last known clock, without claiming an
+        // unobserved transition or resetting it when the same session reconnects.
+        if(!STATES.has(report.status)||!this.validId(report.sessionId))return {...report,hidden:false};
+        if(!row||row.sessionId!==report.sessionId){row={sessionId:report.sessionId,status:report.status,idleSince:report.status==='idle'?now:null,messageId:null,messageAt:0,speechAt:0,expiredThrough:0,expiredMessageId:null};this.rows.set(report.id,row);}
+        if(report.status==='idle'&&row.status!=='idle')row.idleSince=now;
+        else if(report.status!=='idle')row.idleSince=null;
+        row.status=report.status;
+        const genuine=report.kind==='report'&&this.validId(report.sourceId)&&typeof report.fullText==='string'&&!!report.fullText.trim()&&Number.isSafeInteger(report.timestamp)&&report.timestamp>0&&report.timestamp<=now+60000;
+        if(genuine&&report.sourceId!==row.messageId&&report.timestamp>row.messageAt&&report.timestamp>row.expiredThrough){row.messageId=report.sourceId;row.messageAt=report.timestamp;row.speechAt=Math.min(report.timestamp,now);}
+        this.expire(row,now);
+        const idleExpired=row.idleSince!==null&&now>=Math.max(row.idleSince,row.speechAt)+IDLE_EXPIRY_MS;
+        const oldSpeech=genuine&&(report.timestamp<=row.expiredThrough||report.sourceId===row.expiredMessageId);
+        if(idleExpired)return {...report,hidden:true};
+        // Returning active alone does not resurrect expired words. Actual active
+        // state and creature animation remain available, with no invented speech.
+        if(oldSpeech)return {...report,hidden:report.status==='idle',kind:'state',sourceId:null,timestamp:null,historical:false,fullText:null,label:stateLabel(report.status),preview:'No new public update'};
+        return {...report,hidden:false};
+      });
+      const saved=JSON.stringify({version:1,rows:[...this.rows]});
+      if(saved!==this.saved){try{this.storage?.setItem(EXPIRY_KEY,saved);}catch{}this.saved=saved;}
+      return output;
+    }
+  }
+
   const overlaps=(a,b,gap=0)=>a.x<b.x+b.width+gap&&a.x+a.width+gap>b.x&&a.y<b.y+b.height+gap&&a.y+a.height+gap>b.y;
   const inside=(box,w,h,pad)=>box.x>=pad-.01&&box.y>=pad-.01&&box.x+box.width<=w-pad+.01&&box.y+box.height<=h-pad+.01;
   function connect(box,point){
@@ -50,9 +96,9 @@
   // Card placement is retained until a projected body actually collides with it.
   // Most frames do 36 rectangle checks, then move connector endpoints only. A
   // collision triggers a bounded, six-card packing search, never another RAF.
-  function layoutBubbles(points,{width,height,padding=6,gap=5,preferredWidth=124,preferredHeight=74,compactHeight=60,previous=[]}={}) {
+  function layoutBubbles(points,{width,height,padding=6,gap=5,preferredWidth=124,preferredHeight=74,compactHeight=60,previous=[],bodyPoints=points}={}) {
     const w=Math.max(1,Number(width)||1),h=Math.max(1,Number(height)||1),pad=Math.min(padding,w/12,h/12);
-    const obstacles=points.filter(point=>Number.isFinite(point.x)&&Number.isFinite(point.y)&&point.radius>0).map(point=>({x:point.x-point.radius,y:point.y-point.radius,width:point.radius*2,height:point.radius*2})).filter(box=>box.x+box.width>0&&box.y+box.height>0&&box.x<w&&box.y<h);
+    const obstacles=bodyPoints.filter(point=>Number.isFinite(point.x)&&Number.isFinite(point.y)&&point.radius>0).map(point=>({x:point.x-point.radius,y:point.y-point.radius,width:point.radius*2,height:point.radius*2})).filter(box=>box.x+box.width>0&&box.y+box.height>0&&box.x<w&&box.y<h);
     const bodyClear=box=>!obstacles.some(body=>overlaps(box,body,3));
     const old=new Map(Array.isArray(previous)?previous.map(box=>[box.id,box]):[]);
     const valid=box=>box&&box.width>=44&&box.height>=44&&inside(box,w,h,box.height<=44?2:pad)&&bodyClear(box);
@@ -106,6 +152,7 @@
   class Bubbles {
     constructor({stage,renderer,specs=window.DracoChamber?.SPECS||[],select}={}) {
       this.stage=stage;this.renderer=renderer;this.specs=specs;this.select=select;this.active=false;this.live=false;this.motion=false;this.destroyed=false;this.limited=false;this.lastLayout=0;this.fontScale=1;this.nativeFontScale=1;this.appFontScale=1;this.placements=[];this.geometry='';this.cards=new Map();
+      let storage;try{storage=window.localStorage;}catch{}this.expiry=new IdleExpiry({storage});this.reports=[];this.selected=null;
       this.layer=document.createElement('div');this.layer.className='environment-bubbles';this.layer.hidden=true;this.layer.setAttribute('aria-label','Public agent speech previews');
       this.lines=document.createElementNS('http://www.w3.org/2000/svg','svg');this.lines.setAttribute('class','environment-bubble-lines');this.lines.setAttribute('aria-hidden','true');this.layer.append(this.lines);
       for(const spec of specs){
@@ -116,25 +163,30 @@
       stage.append(this.layer);
       this.notice=document.createElement('p');this.notice.className='environment-bubble-notice quiet-note';this.notice.setAttribute('role','status');this.notice.textContent='Public report previews are below the camera controls. This keeps enlarged text readable and agents unobstructed.';this.notice.hidden=true;stage.after(this.notice);
       this.observer=new ResizeObserver(()=>this.layout(true));this.observer.observe(stage);
-      this.onVisibility=()=>{this.layer.hidden=!this.active||document.hidden;this.notice.hidden=!this.active||document.hidden||!this.limited;if(!document.hidden)this.layout(true);};document.addEventListener('visibilitychange',this.onVisibility);
+      this.onVisibility=()=>{this.layer.hidden=!this.active||document.hidden;this.notice.hidden=!this.active||document.hidden||!this.limited;if(!document.hidden){this.renderReports();this.layout(true);}};document.addEventListener('visibilitychange',this.onVisibility);
     }
     update(activity,agents,{live=false,selected,motion=false,nativeFontScale=1,appFontScale=1,now=Date.now()}={}) {
       if(this.destroyed)return;this.live=live===true;this.motion=motion===true;this.nativeFontScale=clamp(Number(nativeFontScale)||1,.85,1.8);this.appFontScale=clamp(Number(appFontScale)||1,.75,2);
-      for(const report of selectReports(activity,agents,{live:this.live,now,specs:this.specs})){
+      this.reports=selectReports(activity,agents,{live:this.live,now,specs:this.specs});this.selected=selected;this.renderReports(now);this.layout(true);
+    }
+    renderReports(now=Date.now()) {
+      for(const report of this.expiry.apply(this.reports,{now})){
         const card=this.cards.get(report.id);card.button.dataset.kind=report.kind;card.button.dataset.status=report.status;card.button.dataset.messageId=report.sourceId||'';card.button.dataset.historical=String(report.historical);card.button.title=report.name+' · '+report.label;
-        card.button.classList.toggle('selected',report.id===selected);card.button.setAttribute('aria-pressed',String(report.id===selected));
+        card.hidden=report.hidden===true;card.button.hidden=card.hidden;if(card.hidden)card.line.setAttribute('visibility','hidden');
+        card.button.classList.toggle('selected',report.id===this.selected);card.button.setAttribute('aria-pressed',String(report.id===this.selected));
         card.button.setAttribute('aria-label',report.name+'. '+report.label+'. '+report.preview+'. Open conversation for the full public report.');
         if(card.label.textContent!==report.label)card.label.textContent=report.label;if(card.text.textContent!==report.preview)card.text.textContent=report.preview;
       }
-      this.layout(true);
     }
-    show(active){if(this.destroyed)return;this.active=active===true;this.layer.hidden=!this.active||document.hidden;this.notice.hidden=!this.active||document.hidden||!this.limited;if(this.active)this.layout(true);}
+    show(active){if(this.destroyed)return;this.active=active===true;this.layer.hidden=!this.active||document.hidden;this.notice.hidden=!this.active||document.hidden||!this.limited;if(this.active){this.renderReports();this.layout(true);}}
     // Hook to the renderer's existing frame; no second RAF, timer, network read,
     // or layout measurement is introduced. Camera changes call layout(true).
     layout(force=false) {
       if(this.destroyed||!this.active||document.hidden)return;
       const now=typeof performance!=='undefined'?performance.now():Date.now();if(!force&&this.live&&this.motion&&now-this.lastLayout<1000/30)return;this.lastLayout=now;
       const width=this.renderer.width,height=this.renderer.height;if(!width||!height)return;
+      const bodyPoints=projectActors(this.renderer,this.specs),points=bodyPoints.filter(point=>!this.cards.get(point.id)?.hidden);
+      if(!points.length){this.layer.hidden=true;this.notice.hidden=true;this.placements=[];this.limited=false;return;}
       if(force){
         const sample=this.cards.values().next().value,computed=typeof window.getComputedStyle==='function'?parseFloat(window.getComputedStyle(sample.text).fontSize):12;
         this.fontScale=resolveFontScale(computed,this.nativeFontScale,this.appFontScale);
@@ -143,7 +195,7 @@
       const geometry=[width,height,this.renderer.zoom,this.renderer.pan?.x,this.renderer.pan?.y,this.fontScale].join(':');
       if(!force&&this.limited&&geometry===this.geometry)return;
       if(geometry!==this.geometry){this.placements=[];this.geometry=geometry;}
-      const boxes=layoutBubbles(projectActors(this.renderer,this.specs),{width,height,preferredWidth:Math.min(180,140+24*(this.fontScale-1)),preferredHeight:84+50*(this.fontScale-1),compactHeight:60+45*(this.fontScale-1),previous:this.placements});this.placements=boxes;
+      const boxes=layoutBubbles(points,{width,height,bodyPoints,preferredWidth:Math.min(180,140+24*(this.fontScale-1)),preferredHeight:84+50*(this.fontScale-1),compactHeight:60+45*(this.fontScale-1),previous:this.placements});this.placements=boxes;
       // A 44px hit target is not proof that its report is readable. Never reduce
       // six reports to the single truncated word/chips shown on the S25 Ultra.
       const overhead=boxes.density==='compact'?14+12.5*this.fontScale:22+26*this.fontScale;
@@ -165,5 +217,5 @@
     }
     destroy(){if(this.destroyed)return;this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);this.layer.remove();this.notice.remove();this.cards.clear();}
   }
-  window.DracoEnvironmentBubbles={Bubbles,selectReports,layoutBubbles,projectActors,resolveFontScale,previewText};
+  window.DracoEnvironmentBubbles={Bubbles,IdleExpiry,IDLE_EXPIRY_MS,selectReports,layoutBubbles,projectActors,resolveFontScale,previewText};
 })();

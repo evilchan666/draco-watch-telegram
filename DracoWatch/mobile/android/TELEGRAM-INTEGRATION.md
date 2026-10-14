@@ -71,3 +71,10 @@ Its source checks do not establish loaded serving bytes or live checklist covera
 The Android fork module can consume that safe field over the existing endpoint,
 but it never reads tool arguments itself. The public fork export contains Android
 and UI source, not private pairing, host configuration or service activation.
+
+Operator3423 also adds Environment-only idle bubble expiry: absolute60s from the
+later of first observed idle/latest genuine public text, without polling/reconnect
+renewal or active-only resurrection. Manual on/off remains the persisted master
+preference. Chat/pins/history and active creature mechanics remain unchanged;
+unknown is not treated as idle. There is no independent bubble timer and no
+measured energy-saving claim. This is not a Quest VR change.

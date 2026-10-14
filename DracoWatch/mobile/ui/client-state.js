@@ -37,7 +37,7 @@
   }
   class ClientState {
     constructor(storage) {
-      this.storage = storage; this.data = {drafts:{},attachments:[],outbox:[],pins:[],pinHistory:[],preferences:{scale:100,motion:false,rendering:'auto',echoToTelegram:false,automaticSpeech:true,playbackRate:1}};
+      this.storage = storage; this.data = {drafts:{},attachments:[],outbox:[],pins:[],pinHistory:[],preferences:{scale:100,motion:false,rendering:'auto',echoToTelegram:false,automaticSpeech:true,playbackRate:1,environmentBubbles:true}};
       try {
         const saved = JSON.parse(storage.getItem(KEY) || 'null');
         if (saved && typeof saved === 'object') {
@@ -49,6 +49,7 @@
           this.data.preferences.playbackRate = [.5,.75,1,1.25,1.5,2].includes(saved.preferences?.playbackRate) ? saved.preferences.playbackRate : 1;
           this.data.preferences.motion = saved.preferences?.motion === true;
           this.data.preferences.automaticSpeech = saved.preferences?.automaticSpeech !== false;
+          this.data.preferences.environmentBubbles = saved.preferences?.environmentBubbles !== false;
           this.data.preferences.echoToTelegram = typeof saved.preferences?.echoToTelegram === 'boolean' ? saved.preferences.echoToTelegram : !!saved.preferences && typeof saved.preferences.scale === 'number';
           this.data.preferences.rendering = ['auto','light','full'].includes(saved.preferences?.rendering)?saved.preferences.rendering:'auto';
           this.data.pins = restorePins(saved.pins);
