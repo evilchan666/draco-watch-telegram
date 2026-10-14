@@ -30,6 +30,7 @@ runtime records enter that export.
 | Six agents, conversations, roster | Native TelegramSurface | Public admitted history only; unavailable history explicit |
 | Pin/unpin/history/cycle/open | Native banner/actions + ClientState | Device-local exact agent/physical-session snapshots; no server-pin claim |
 | Live operational stream | Native chat includes selected work; Activity all six | Same guarded safe projection, same-revision expand; no new deep reads |
+| Task checklist, count and current step | Explicit operator-visible progress-card plan in the guarded work projection | Bounded public step/status fields only; private plans/markdown/queries excluded. Requires the staged backend producer, not inferred from generic tool counts |
 | Full readable reports | Selectable native text, exact rich/full view fallback | Native preview24000chars, full bundled view available; no silent source truncation claim |
 | Markdown/code/links/share | Formatted/full message view + original actions | Native text is readable plain source; formatted mode uses retained renderer |
 | Drafts/outbox/uncertain input | Existing ClientState and dispatchSubmission | Native never bypasses idempotency/custody; no automatic retry |
@@ -40,6 +41,15 @@ runtime records enter that export.
 | Chamber/Environment/graphics/bubbles | Existing bundled views | Native overlay hidden; same layout/animation/freeze behaviour retained |
 | Pairing/signing/updater/preferences | Existing native/core Settings | No Telegram login, gateway restart or runtime change |
 | Adaptive layout | Safe insets applied to both renderers; native sp+appScale | Physical S25/device acceptance remains unverified |
+
+The complete existing composer remains deliberately reachable through Files,
+drafts and outbox; it stays visible until Return to native chat. This retains
+attachment review/removal, original-ID retry, reply clearing and recording finish,
+not merely the smaller Attach/Commands action dialog. Native Send includes and
+checks the exact visible text; an oversized or unsaved draft never dispatches an
+older saved body. Compact controls use accessible native vectors rather than
+wrapping words into syllables. Large text remains large; the editor scrolls its
+complete text inside a bounded height.
 
 ## Evidence policy
 
@@ -55,3 +65,9 @@ Clickable memory citations remain unavailable without an audience-bound original
 source/revision resolver. Conditional host nested-event support is not invented
 from wrapper prose. Existing missing upstream fields and delivery-leg acceptance
 remain explicit; no claim that pinning or native presentation supplies them.
+
+The new explicit task-card producer is a separate, staged backend source change.
+Its source checks do not establish loaded serving bytes or live checklist coverage.
+The Android fork module can consume that safe field over the existing endpoint,
+but it never reads tool arguments itself. The public fork export contains Android
+and UI source, not private pairing, host configuration or service activation.

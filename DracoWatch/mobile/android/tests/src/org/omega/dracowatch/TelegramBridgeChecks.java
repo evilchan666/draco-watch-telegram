@@ -96,14 +96,28 @@ public final class TelegramBridgeChecks extends Instrumentation {
         for (int i = 0; i < 100; i++) { if (rowsText().contains(expected)) return; SystemClock.sleep(100); }
         throw new AssertionError("Actual native rows did not receive expected text: " + expected);
     }
+    private View revealRowControl(String control) throws Exception {
+        ListView list=(ListView)requireTag("telegram-timeline");
+        int index=ui(()->{for(int i=0;i<list.getAdapter().getCount();i++)if(list.getAdapter().getView(i,null,list).findViewWithTag(control)!=null)return i;return -1;});
+        if(index<0)throw new AssertionError("Actual native adapter has no control "+control);
+        ui(()->{list.setSelection(index);return null;});waitForIdleSync();
+        for(int i=0;i<30;i++){View v=tag(control);if(v!=null)return v;SystemClock.sleep(80);}
+        throw new AssertionError("Actual native work row did not become visible: "+control);
+    }
     private AccessibilityNodeInfo exactNode(String label) {
         AccessibilityNodeInfo root = getUiAutomation().getRootInActiveWindow(); if (root == null) return null;
         for (AccessibilityNodeInfo n : root.findAccessibilityNodeInfosByText(label)) if (n.getText() != null && label.equalsIgnoreCase(n.getText().toString())) return n;
         return null;
     }
+    private boolean scrollDialog(AccessibilityNodeInfo n) {
+        if (n == null) return false;
+        if (n.isScrollable() && n.getClassName() != null && n.getClassName().toString().contains("ListView") && n.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) return true;
+        for (int i = 0; i < n.getChildCount(); i++) if (scrollDialog(n.getChild(i))) return true;
+        return false;
+    }
     private void dialogChoice(String label) throws Exception {
         AccessibilityNodeInfo n = null;
-        for (int i = 0; i < 40 && n == null; i++) { n = exactNode(label); if (n == null) SystemClock.sleep(80); }
+        for (int i = 0; i < 40; i++) { n = exactNode(label); if (n != null && n.isVisibleToUser()) break; scrollDialog(getUiAutomation().getRootInActiveWindow()); n = null; SystemClock.sleep(80); }
         if (n == null) throw new AssertionError("Native dialog choice missing: " + label);
         for (int i = 0; i < 5 && !n.isClickable() && n.getParent() != null; i++) n = n.getParent();
         boolean clicked = n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -148,19 +162,59 @@ public final class TelegramBridgeChecks extends Instrumentation {
     }
     private void screenshot(String name) throws Exception {
         if (!flag("screenshots")) return;
-        waitForIdleSync(); SystemClock.sleep(150); Bitmap shot = getUiAutomation().takeScreenshot();
+        // Deliberate unavailable-control checks show LENGTH_LONG refusal toasts.
+        // Evidence must show the app rather than the temporary system overlay.
+        waitForIdleSync(); SystemClock.sleep(3700); Bitmap shot = getUiAutomation().takeScreenshot();
         if (shot == null) throw new AssertionError("Screenshot unavailable");
         File dir = new File(getTargetContext().getExternalFilesDir(null), "telegram-bridge-checks"); if (!dir.exists() && !dir.mkdirs()) throw new AssertionError("Screenshot directory unavailable");
         File file = new File(dir, name + "-font" + Math.round(activity.getResources().getConfiguration().fontScale * 100) + ".png");
         try (FileOutputStream out = new FileOutputStream(file)) { shot.compress(Bitmap.CompressFormat.PNG, 100, out); } finally { shot.recycle(); }
     }
-    private void assertLayout() throws Exception {
+    private void publicProgressCase() throws Exception {
+        js("(()=>{const x=bridgeFixture(),now=Date.now(),scope={agent:'atlas',sessionId:'"+SESSION+"',sessionKey:'bridge:atlas',runId:'bridge-owned-run',callId:'bridge-progress-call'};"
+            +"x.workActivity=[{...scope,id:'bridge-progress-card',role:'assistant',kind:'Tool started',text:'Task progress 1/3 · Current: Integrate native controls',timestamp:now,source:'authenticated-tool-status',publicAttested:true,evidenceRevision:'7'.repeat(64),evidenceSource:{kind:'recorded-history',sequence:8,projectionRevision:1,observedAt:now,freshUntil:now+15000},observation:{...scope,version:1,tool:'progress_card',toolName:'functions.progress_card',phase:'start',redacted:true,taskProgress:{version:1,source:'operator-progress-card',completed:99,total:99,current:'FORGED_DERIVED_VALUE',steps:[{step:'Preserve current release',status:'completed'},{step:'Integrate native controls',status:'in_progress'},{step:'Verify live operational stream',status:'pending'}]},privateModelContext:'PRIVATE_CONTEXT_SHOULD_NOT_BE_RENDERED',gaps:[]}}];onDracoSnapshot(x);DracoWatch.select('atlas');return true;})()");
+        waitShowing(true); waitRows("Task progress 1/3");
+        click(revealRowControl("telegram-expand-bridge-progress-card"));
+        TextView evidence=(TextView)requireTag("telegram-evidence-bridge-progress-card");String detail=ui(()->evidence.getText().toString());
+        check(detail.contains("Task progress: 1/3 complete")&&detail.contains("Current step: Integrate native controls"),"actual bridge/native public progress recomputes completed count and current step rather than trusting derived fields");
+        check(detail.contains("☑ Preserve current release")&&detail.contains("▶ Integrate native controls")&&detail.contains("☐ Verify live operational stream"),"native read-only evidence retains the explicit completed/current/pending checklist");
+        check(detail.contains("bridge:atlas")&&detail.contains(""+SESSION)&&detail.contains("bridge-owned-run")&&detail.contains("bridge-progress-call"),"native public progress detail remains bound to exact supplied owner session/run/call");
+        check(!rowsText().contains("PRIVATE_CONTEXT_SHOULD_NOT_BE_RENDERED")&&!detail.contains("FORGED_DERIVED_VALUE")&&detail.contains("not private planning"),"public progress rendering excludes private extras and labels its operator-visible source");
+        screenshot("integrated-public-progress");
+    }
+    private int dp(float value) { return Math.round(value * activity.getResources().getDisplayMetrics().density); }
+    private void readableControl(String id, Rect root, String label) throws Exception {
+        View v = requireTag(id); if (!ui(() -> v.isShown())) return;
+        Rect r = ui(() -> { Rect measured = new Rect(); v.getGlobalVisibleRect(measured); return measured; });
+        check(r.width() >= dp(40) - 1 && r.height() >= dp(40) - 1 && r.width() >= ui(() -> v.getWidth()) - 1 && r.height() >= ui(() -> v.getHeight()) - 1
+            && r.left >= root.left - 1 && r.right <= root.right + 1 && r.top >= root.top - 1 && r.bottom <= root.bottom + 1, label + " " + id + " has a complete at-least-40dp touch target");
+        check(ui(() -> v.getContentDescription() != null && v.getContentDescription().length() > 0), label + " " + id + " retains accessible action semantics");
+        if (v instanceof TextView) { TextView text = (TextView) v;
+            if (ui(() -> text.getText().length()) == 0) check(ui(() -> { for (android.graphics.drawable.Drawable d : text.getCompoundDrawables()) if (d != null) return true; return false; }), label + " " + id + " renders a real native icon rather than an empty action");
+            else check(ui(() -> text.getLayout() != null && text.getLayout().getLineCount() == 1 && text.getLayout().getEllipsisCount(0) == 0
+                && text.getPaint().measureText(text.getText().toString()) <= text.getWidth() - text.getCompoundPaddingLeft() - text.getCompoundPaddingRight() + 1), label + " " + id + " has no syllable-wrapped, ellipsized or clipped control label"); }
+    }
+    private void assertLayout(String label) throws Exception {
         Rect bounds = ui(() -> { Rect r = new Rect(); surface.getGlobalVisibleRect(r); return r; });
-        check(bounds.width() > 0 && bounds.height() > 0, "integrated native surface has an actual viewport");
+        check(bounds.width() > 0 && bounds.height() > 0, label + " integrated native surface has an actual viewport");
         for (String key : new String[]{"telegram-navigation", "telegram-composer", "telegram-send", "telegram-draft"}) {
             View v = requireTag(key); Rect r = ui(() -> { Rect measured = new Rect(); v.getGlobalVisibleRect(measured); return measured; });
-            check(r.width() > 0 && r.height() > 0 && r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1, "integrated " + key + " fits within actual viewport");
+            check(r.width() > 0 && r.height() > 0 && r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1, label + " integrated " + key + " fits within actual viewport");
         }
+        ListView list = (ListView) requireTag("telegram-timeline"); View composer = requireTag("telegram-composer"); EditText draft = (EditText) requireTag("telegram-draft");
+        int line = ui(() -> { for (int i = 0; i < list.getAdapter().getCount(); i++) for (View v : descendants(list.getAdapter().getView(i, null, list)))
+            if (v instanceof TextView && PUBLIC_TEXT.equals(((TextView) v).getText().toString())) return ((TextView) v).getLineHeight(); return 0; });
+        check(line > 0, label + " measures actual native full-message typography");
+        int height = ui(() -> list.getHeight()), useful = ui(() -> list.getHeight() - list.getPaddingTop() - list.getPaddingBottom()), composerHeight = ui(() -> composer.getHeight());
+        android.util.Log.i("DracoTelegramBridge", "LAYOUT " + label + " root=" + bounds.height() + " timeline=" + height + " useful=" + useful + " messageLine=" + line + " composer=" + composerHeight + " draft=" + ui(() -> draft.getHeight()));
+        boolean shortHeight = bounds.height() < dp(480);
+        int usefulMinimum = shortHeight ? Math.max(dp(64), Math.min(2 * line, (int) Math.floor(bounds.height() * .28))) : Math.max(dp(120), 3 * line);
+        check(height >= Math.ceil(bounds.height() * (shortHeight ? .28 : .30)), label + " integrated messages retain a meaningful " + (shortHeight ? "compact-height" : "portrait") + " viewport share");
+        check(useful >= usefulMinimum, label + " useful message viewport retains readable lines after padding; required=" + usefulMinimum + " actual=" + useful);
+        check(composerHeight <= Math.floor(bounds.height() * (shortHeight ? .34 : .24)), label + " bounded integrated composer leaves useful message space");
+        check(ui(() -> draft.getWidth()) >= dp(100), label + " draft retains a useful at-least-100dp typing width");
+        check(ui(() -> draft.getHeight()) <= Math.max(dp(96), 3 * ui(() -> draft.getLineHeight()) + ui(() -> draft.getCompoundPaddingTop() + draft.getCompoundPaddingBottom())), label + " exact draft stays inside bounded multiline editor");
+        for (String id : new String[]{"telegram-send", "telegram-mic", "telegram-attach", "telegram-stop-run", "telegram-options", "telegram-pin-options", "telegram-speed", "telegram-stop-audio", "telegram-nav-chats", "telegram-nav-chamber", "telegram-nav-environment", "telegram-nav-activity", "telegram-nav-settings"}) readableControl(id, bounds, label);
         if (flag("requireFont150")) check(activity.getResources().getConfiguration().fontScale >= 1.49f, "actual native Android font is 150 percent");
     }
     @Override public void onStart() {
@@ -197,7 +251,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
             for (int i = 0; i < 100 && ui(() -> requireTag("telegram-pinned-banner").getVisibility()) != View.VISIBLE; i++) SystemClock.sleep(100);
             check(ui(() -> requireTag("telegram-pinned-banner").getVisibility()) == View.VISIBLE, "actual persisted pin is displayed by real native banner");
             jsCheck("JSON.parse(localStorage.getItem('" + CACHE + "')).pins.some(p=>p.agent==='atlas'&&p.sessionId==='" + SESSION + "'&&p.messageId==='" + MESSAGE + "')", "pin stores exact admitted message/session instead of a floating title");
-            screenshot("integrated-pinned-chat"); assertBoundary("first-page bridge");
+            assertLayout("100 percent app scale"); screenshot("integrated-pinned-chat"); assertBoundary("first-page bridge");
 
             js("window.bridgeReloadSentinel=true"); ui(() -> { web.reload(); return null; });
             waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'");
@@ -213,7 +267,14 @@ public final class TelegramBridgeChecks extends Instrumentation {
             js("DracoWatch.select('atlas')"); waitShowing(true); waitRows(PUBLIC_TEXT);
             check(ui(() -> ((EditText) requireTag("telegram-draft")).getText().toString()).equals(DRAFT), "return from Environment preserves native conversation draft");
 
-            click(requireTag("telegram-options")); dialogChoice("Files, drafts and outbox");
+            click(requireTag("telegram-options")); dialogChoice("Files, drafts and outbox"); waitShowing(false);
+            waitJs("!!document.getElementById('native-return')&&!document.getElementById('conversation-screen').hidden");
+            jsCheck("!document.querySelector('dialog[open]')&&document.getElementById('draft').value===" + JSONObject.quote(DRAFT), "native Files/drafts/outbox reveals complete retained composer without clearing draft or substituting action modal");
+            jsCheck("bridgeChecks.actions.some(e=>e.action==='composer'&&e.data.agent==='atlas'&&e.data.sessionId==='" + SESSION + "')", "complete composer navigation keeps exact native-to-JS conversation scope");
+            screenshot("integrated-complete-composer"); js("document.getElementById('native-return').click()"); waitShowing(true);
+            check(ui(() -> ((EditText) requireTag("telegram-draft")).getText().toString()).equals(DRAFT), "return from complete composer preserves exact native draft");
+
+            click(requireTag("telegram-options")); dialogChoice("Advanced conversation controls");
             waitJs("document.getElementById('conversation-actions-dialog').open"); waitShowing(false);
             jsCheck("bridgeChecks.actions.some(e=>e.action==='tools'&&e.data.agent==='atlas'&&e.data.sessionId==='" + SESSION + "')", "native advanced-tools action reaches existing exact-scope JS dialog");
             screenshot("integrated-advanced-dialog");
@@ -221,7 +282,8 @@ public final class TelegramBridgeChecks extends Instrumentation {
             check(ui(() -> ((TextView) requireTag("telegram-title")).getText().toString()).equals("ATLAS"), "closing legacy advanced dialog restores real native conversation");
 
             js("(()=>{const e=document.getElementById('display-scale');e.value='150';e.dispatchEvent(new Event('input',{bubbles:true}));return true;})()");
-            SystemClock.sleep(180); assertLayout(); screenshot("integrated-chat-app150");
+            SystemClock.sleep(180); assertLayout("150 percent app scale"); screenshot("integrated-chat-app150");
+            publicProgressCase();
             assertBoundary("reloaded-page bridge");
             result.putString("stream", "Telegram bridge checks passed: " + checks + ". Actual Activity/WebView/native rendering and native action return; synthetic unpaired state, transport/media spies, no production input/audio. Physical acceptance remains unverified.\n");
             finish(0, result);

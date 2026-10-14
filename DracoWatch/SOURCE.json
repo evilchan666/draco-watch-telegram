@@ -1,8 +1,9 @@
 {
-  "watchSource": "babbfff69edb7096418ed2b29ea2bc94974d0261",
+  "watchSource": "62c9f5edb04e55a469c5d1d3967bd447449cc519",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,
-  "publiclyPublished": false,
-  "physicalAcceptance": "unverified"
+  "updaterPublished": false,
+  "physicalAcceptance": "unverified",
+  "taskProgressBackend": "staged separately in Watch source; not activated"
 }

@@ -241,6 +241,11 @@
   }
   function workPreview(event){return window.DracoEnvironmentBubbles.previewText(attachmentSummary(event)||event?.text||'').slice(0,340);}
   function publicKind(event){return event.kind==='Public update'?'Public update':event.kind||'Public update';}
+  function taskProgress(observation){
+    const value=observation?.taskProgress,steps=value?.steps;
+    if(observation?.tool!=='progress_card'||observation.phase!=='start'||value?.version!==1||value.source!=='operator-progress-card'||!Array.isArray(steps)||steps.length>50||!steps.length||steps.some(s=>!['pending','in_progress','completed'].includes(s?.status)||typeof s.step!=='string'||!s.step.trim()||s.step.length>160||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u.test(s.step))||steps.filter(s=>s.status==='in_progress').length>1)return null;
+    return {steps,completed:steps.filter(s=>s.status==='completed').length,total:steps.length,current:steps.find(s=>s.status==='in_progress')?.step||null};
+  }
   function openWork(agent){if(state.chat&&!closeChat())return;state.filter=agent;state.activityMode='work';renderFilters();showView('activity',{work:true});$('activity-heading').focus({preventScroll:true});}
   function renderChatWork(){const current=latestWork(state.selected),summary=live()?current?publicKind(current)+' · '+workPreview(current):'No detailed updates reported':'Work feed unavailable · last received chat retained';const stateLabel=live()?label(row()?.status):'Unobserved';$('chat-work-label').textContent=stateLabel+' · '+summary;$('chat-work').setAttribute('aria-label',byId.get(state.selected).name+' work feed. '+stateLabel+'. '+summary+'. Open Activity.');$('chat-work').dataset.live=String(live());}
   function renderWorkSummaries(){const fragment=document.createDocumentFragment();for(const spec of SPECS){if(state.filter!=='all'&&state.filter!==spec.id)continue;const agent=state.agents.get(spec.id),event=latestWork(spec.id),card=create('article','work-card');card.style.setProperty('--agent-color',spec.color);card.dataset.agent=spec.id;card.dataset.live=String(live());const heading=create('div','work-heading');heading.append(create('h3','',spec.name),create('span','work-state',live()?label(agent?.status):'Unobserved'));card.append(heading);
@@ -255,6 +260,7 @@
   function activityOperation(item,event){
     const observation=event.observation;item.append(create('p','tool-status-text',event.text));
     if(!observation){item.append(create('p','timeline-kind','Legacy summary · exact call/detail not recorded'));return;}
+    const progress=taskProgress(observation);if(progress)item.append(create('p','task-progress-summary',progress.completed+'/'+progress.total+' complete'+(progress.current?' · Current: '+progress.current:' · No current step reported')));
     item.append(create('p','operation-label',(observation.toolName||observation.tool)+' · '+observation.phase+' · safe evidence'));
     const key=activityKey(event),full=expandedActivity.has(key);
     const toggle=button(full?'Hide execution details':'Show execution details',()=>{full?expandedActivity.delete(key):expandedActivity.add(key);activitySignature='';renderActivity();},'activity-expand');toggle.setAttribute('aria-expanded',String(full));item.append(toggle);
@@ -262,6 +268,7 @@
     const facts=create('dl','operation-facts');
     const add=(label,value)=>{if(value===undefined||value===null)return;facts.append(create('dt','',label),create('dd','',String(value)));};
     add('Agent',byId.get(event.agent).name);add('Session key',event.sessionKey||observation.sessionKey||'Not supplied');add('Session',event.sessionId);add('Run',event.runId);add('Tool call',event.callId);add('Lifecycle',observation.phase);add('Tool',observation.toolName||observation.tool);const operation=observation.operation;add('Operation',operation?[operation.kind,...(operation.corpora||[]),...(operation.targets||[])].join(' · '):'Safe operation detail not supplied');
+    if(progress){add('Task progress',progress.completed+'/'+progress.total+' complete');add('Current step',progress.current||'None reported');for(const [index,step] of progress.steps.entries())add('Step '+(index+1),({completed:'☑ ',in_progress:'▶ ',pending:'☐ '})[step.status]+step.step);add('Progress source','Explicit operator-visible progress card; not private planning or proof of completion');}
     const c=observation.command;if(c){add('Command / effect',[c.program,c.operation,...(c.flags||[]),...(c.targets||[])].join(' '));}
     const r=observation.result;if(r){for(const [name,label] of [['exitCode','Command exit code'],['outputLines','Output lines'],['outputBytes','Output bytes'],['matchCount','Memory matches'],['sourceCount','Retained sources'],['lineCount','Retained lines'],['durationMs','Duration (ms)'],['returnedCount','Returned entries']])if(Number.isSafeInteger(r[name]))add(label,r[name]);
       if(r.processRunning===true)add('Command state','Still running');if(r.processId!==undefined)add('Process / task ID',r.processId);if(r.truncated!==undefined)add('Returned window truncated',r.truncated?'Yes':'No');for(const flag of ['disabled','stale','partial'])if(r[flag]!==undefined)add('Memory '+flag,r[flag]?'Yes':'No');if(r.warningCode)add('Memory warning',r.warningCode);if(r.warningCodes?.length)add('Memory warnings',r.warningCodes.join(', '));if(r.corpora?.length)add('Memory corpus',r.corpora.join(', '));if(r.corpusKinds?.length)add('Memory corpus',r.corpusKinds.join(', '));if(r.errorCode)add('Error class',r.errorCode);if(Array.isArray(r.sourceKinds))add('Source types',r.sourceKinds.filter(kind=>['workspace-memory','retained-session','unspecified','memory','wiki','sessions','resource','unknown'].includes(kind)).join(', ')||'Not reported');}
@@ -363,7 +370,8 @@
   function telegramDetail(event){
     // Reuse the same allowlisted evidence renderer as Activity, not JSON/raw payloads.
     const node=create('div'),key=activityKey(event),was=expandedActivity.has(key);expandedActivity.add(key);activityOperation(node,event);if(!was)expandedActivity.delete(key);
-    return [...node.children].map(child=>child.tagName==='DL'?[...child.children].map((item,index)=>item.tagName==='DT'?item.textContent+': ':item.textContent+'\n').join(''):child.tagName==='BUTTON'?'':child.textContent).filter(Boolean).join('\n').slice(0,4096);
+    const detail=[...node.children].map(child=>child.tagName==='DL'?[...child.children].map((item,index)=>item.tagName==='DT'?item.textContent+': ':item.textContent+'\n').join(''):child.tagName==='BUTTON'?'':child.textContent).filter(Boolean).join('\n');
+    return detail.length>4096?detail.slice(0,3980)+'\n[Expanded detail limited to 4,096 characters; remaining fields are not shown.]':detail;
   }
   function telegramPayload(){
     const current=history(),sessionId=row()?.sessionId||'',spec=byId.get(state.selected),needle=state.search.toLowerCase();
@@ -389,6 +397,14 @@
       workSummary:state.chat?$('chat-work').textContent:$('activity-count').textContent,observedAt:state.observed};
   }
   function telegramPublish(){if(!telegramEnabled())return;const json=JSON.stringify(telegramPayload());if(json!==telegramSignature){telegramSignature=json;native('renderTelegram',json);}}
+  function telegramComposer(){
+    // Keep every existing custody control reachable while the native surfaces
+    // mature: staged-file review/removal, original-ID retry, reply clear and
+    // Finish recording live in this retained composer, not its action dialog.
+    telegramLegacy=true;$('chat-tools').hidden=false;
+    let back=$('native-return');if(!back){back=button('Return to native chat',()=>{telegramLegacy=false;back.remove();telegramSchedule();},'secondary-button');back.id='native-return';$('conversation-screen').prepend(back);}
+    telegramPublish();requestAnimationFrame(()=>$('draft').scrollIntoView({block:'nearest'}));
+  }
   function telegramFull(id){const m=telegramFind(id);if(!m)return toast('This record is outside the current session window.');telegramLegacy=true;expandedMessages.add(id);const i=(history()?.conversation||[]).findIndex(row=>row.id===id);if(i>=0)messageOffsets.set(state.selected,Math.max(0,history().conversation.length-i-25));renderSignature='';renderMessages();let back=$('native-return');if(!back){back=button('Return to native chat',()=>{telegramLegacy=false;back.remove();telegramSchedule();},'secondary-button');back.id='native-return';$('conversation-screen').prepend(back);}telegramPublish();requestAnimationFrame(()=>[...$('conversation-list').children].find(row=>row.dataset.messageId===id)?.scrollIntoView({block:'center'}));}
   window.onDracoTelegramAction=event=>{
     const action=event?.action,d=event?.data||{};
@@ -402,9 +418,15 @@
     try{
       if(action==='closeChat')closeChat();
       else if(action==='draft'){if(typeof d.text==='string'&&d.text.length<=16000){$('draft').value=d.text;saveDraft();}else toast('Draft exceeds the 16,000-character saved limit. Nothing was sent.');}
-      else if(action==='send'){if(['send','queue','steer'].includes(d.mode))send(d.mode);}
+      else if(action==='send'){
+        // The body visible in the native composer must be the body admitted by
+        // the existing outbox. A rejected paste must never send an older draft.
+        if(typeof d.text!=='string'||d.text.length>16000||d.text!==$('draft').value)return toast('The visible draft is not saved exactly. Nothing was sent. Keep it within 16,000 characters and try again.');
+        if(['send','queue','steer'].includes(d.mode))send(d.mode);
+      }
       else if(action==='stop')stop();
       else if(action==='tools')conversationActions();
+      else if(action==='composer')telegramComposer();
       else if(action==='commands')commands();
       else if(action==='details')details();
       else if(action==='attach'){if(!$('attach').disabled)$('attach').click();}

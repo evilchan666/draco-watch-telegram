@@ -90,9 +90,14 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         for(AccessibilityNodeInfo node:found)if(node.getText()!=null&&text.equalsIgnoreCase(node.getText().toString()))return node;
         return null;
     }
+    private boolean scrollDialog(AccessibilityNodeInfo node){
+        if(node==null)return false;
+        if(node.isScrollable()&&node.getClassName()!=null&&node.getClassName().toString().contains("ListView")&&node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))return true;
+        for(int i=0;i<node.getChildCount();i++)if(scrollDialog(node.getChild(i)))return true;return false;
+    }
     private void dialogChoice(String text) throws Exception {
         AccessibilityNodeInfo node=null;
-        for(int i=0;i<35&&node==null;i++){node=findNode(text);if(node==null)SystemClock.sleep(80);}
+        for(int i=0;i<35;i++){node=findNode(text);if(node!=null&&node.isVisibleToUser())break;scrollDialog(getUiAutomation().getRootInActiveWindow());node=null;SystemClock.sleep(80);}
         if(node==null)throw new AssertionError("Dialog choice missing: "+text);
         AccessibilityNodeInfo clickable=node;
         for(int i=0;i<5&&!clickable.isClickable()&&clickable.getParent()!=null;i++)clickable=clickable.getParent();
@@ -104,6 +109,18 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         if(event==null)return false;JSONObject data=event.optJSONObject("data");if(data==null)return false;
         return agent.equals(data.optString("agent"))&&("physical-"+agent).equals(data.optString("sessionId"));
     }
+    private int dp(float value){return Math.round(value*activity.getResources().getDisplayMetrics().density);}
+    private void readableControl(String id,Rect root,String label)throws Exception{
+        View view=requireTag(id);if(!ui(()->view.isShown()))return;
+        Rect bounds=ui(()->{Rect r=new Rect();view.getGlobalVisibleRect(r);return r;});
+        check(bounds.width()>=dp(40)-1&&bounds.height()>=dp(40)-1&&bounds.width()>=ui(()->view.getWidth())-1&&bounds.height()>=ui(()->view.getHeight())-1
+            &&bounds.left>=root.left-1&&bounds.right<=root.right+1&&bounds.top>=root.top-1&&bounds.bottom<=root.bottom+1,label+" "+id+" has a complete at-least-40dp touch target");
+        check(ui(()->view.getContentDescription()!=null&&view.getContentDescription().length()>0),label+" "+id+" keeps an accessible action label");
+        if(view instanceof TextView){TextView text=(TextView)view;
+            if(ui(()->text.getText().length())==0)check(ui(()->{for(android.graphics.drawable.Drawable d:text.getCompoundDrawables())if(d!=null)return true;return false;}),label+" "+id+" renders a real icon instead of an empty control");
+            else check(ui(()->text.getLayout()!=null&&text.getLayout().getLineCount()==1&&text.getLayout().getEllipsisCount(0)==0
+                &&text.getPaint().measureText(text.getText().toString())<=text.getWidth()-text.getCompoundPaddingLeft()-text.getCompoundPaddingRight()+1),label+" "+id+" is readable without syllable wrapping or clipped label");}
+    }
     private void assertLayout(String label) throws Exception {
         Rect root=ui(()->{Rect r=new Rect();surface.getGlobalVisibleRect(r);return r;});
         check(root.width()>0&&root.height()>0,label+" native surface has an actual measured viewport");
@@ -111,7 +128,17 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             View view=requireTag(id);Rect bounds=ui(()->{Rect r=new Rect();view.getGlobalVisibleRect(r);return r;});
             check(bounds.width()>0&&bounds.height()>0&&bounds.left>=root.left-1&&bounds.right<=root.right+1&&bounds.top>=root.top-1&&bounds.bottom<=root.bottom+1,label+" "+id+" remains visible inside viewport");
         }
-        ListView list=timeline();check(ui(()->list.getHeight())>70,label+" retains usable scrollable message space");
+        ListView list=timeline();View compose=requireTag("telegram-composer");EditText draft=(EditText)requireTag("telegram-draft");
+        TextView report=ui(()->exactText(row(1),LONG_TEXT));check(report!=null,label+" measures actual full-message typography");
+        int listHeight=ui(()->list.getHeight()),usable=ui(()->list.getHeight()-list.getPaddingTop()-list.getPaddingBottom()),line=ui(()->report.getLineHeight()),composerHeight=ui(()->compose.getHeight());
+        android.util.Log.i("DracoTelegramCheck","LAYOUT "+label+" root="+root.height()+" timeline="+listHeight+" usable="+usable+" messageLine="+line+" composer="+composerHeight+" draft="+ui(()->draft.getHeight()));
+        boolean shortHeight=root.height()<dp(480);int usefulMinimum=shortHeight?Math.max(dp(64),Math.min(2*line,(int)Math.floor(root.height()*.28))):Math.max(dp(120),3*line);
+        check(listHeight>=Math.ceil(root.height()*(shortHeight?.28:.30)),label+" messages retain a meaningful "+(shortHeight?"compact-height":"portrait")+" viewport share");
+        check(usable>=usefulMinimum,label+" message area fits readable lines after padding; required="+usefulMinimum+" actual="+usable);
+        check(composerHeight<=Math.floor(root.height()*(shortHeight?.34:.24)),label+" bounded composer leaves message space rather than consuming the screen");
+        check(ui(()->draft.getWidth())>=dp(100),label+" draft retains a useful at-least-100dp typing width");
+        check(ui(()->draft.getHeight())<=Math.max(dp(96),3*ui(()->draft.getLineHeight())+ui(()->draft.getCompoundPaddingTop()+draft.getCompoundPaddingBottom())),label+" draft scrolls within a bounded multiline editor");
+        for(String id:new String[]{"telegram-send","telegram-mic","telegram-attach","telegram-stop-run","telegram-options","telegram-pin-options","telegram-speed","telegram-stop-audio","telegram-nav-chats","telegram-nav-chamber","telegram-nav-environment","telegram-nav-activity","telegram-nav-settings"})readableControl(id,root,label);
         float configured=activity.getResources().getConfiguration().fontScale;
         if(flag("requireFont150"))check(configured>=1.49f,"Android native system font is actually enlarged to 150 percent");
     }
@@ -129,15 +156,25 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             ImageView back=(ImageView)requireTag("telegram-back");check(ui(()->back.getDrawable().getClass().getName()).equals("org.omega.dracowatch.telegram.BackDrawable"),"actual Telegram navigation drawable is in use");
             check(ui(()->timeline().getAdapter().getCount())==6,"native conversation roster contains all six agents");
             for(int i=0;i<AGENTS.length;i++){int from=actions.size();View agentRow=row(i);click(agentRow);JSONObject opened=event(from,"openChat");check(opened!=null&&AGENTS[i].equals(opened.getJSONObject("data").optString("agent")),"native roster navigates exact agent "+AGENTS[i]);}
-            render(base(true,"atlas"));View message=row(1);
+            render(base(true,"atlas"));View message=row(1);assertLayout("100 percent app scale");
             check(ui(()->backgroundClass(message,"org.omega.dracowatch.telegram.MessageDrawable")),"message cell uses actual Telegram bubble path renderer");
             TextView full=ui(()->exactText(message,LONG_TEXT));check(full!=null&&ui(()->full.isTextSelectable()),"full exact public message is selectable, not preview-only");
             check(ui(()->full.getEllipsize())==null&&ui(()->full.getMaxLines())>1000,"full report is not visually ellipsized or line-clamped");
             check(ui(()->requireTag("telegram-pinned-banner").getVisibility())==View.VISIBLE,"native pin banner is visible with retained pins");
             int beforeDraft=actions.size();EditText draft=(EditText)requireTag("telegram-draft");ui(()->{draft.requestFocus();draft.setText("EXACT NEW SYNTHETIC DRAFT\nKeep every character.");return null;});
             JSONObject draftEvent=event(beforeDraft,"draft");check(exactScope(draftEvent,"atlas")&&draftEvent.getJSONObject("data").optString("text").equals(draft.getText().toString()),"native draft callback keeps exact text and physical-session scope");
-            int beforeSend=actions.size();click(requireTag("telegram-send"));JSONObject sent=event(beforeSend,"send");check(exactScope(sent,"atlas")&&"send".equals(sent.getJSONObject("data").optString("mode")),"native Send stays bound to exact conversation without bypassing custody");
+            int beforeSend=actions.size();click(requireTag("telegram-send"));JSONObject sent=event(beforeSend,"send");check(exactScope(sent,"atlas")&&"send".equals(sent.getJSONObject("data").optString("mode"))&&sent.getJSONObject("data").optString("text").equals(ui(()->draft.getText().toString())),"native Send includes the exact visible draft and conversation scope without bypassing custody");
             check(ui(()->draft.getText().toString()).startsWith("EXACT NEW SYNTHETIC"),"native admission does not prematurely clear unsent text");
+            String oversized=repeat("x",16001);ui(()->{draft.setText(oversized);return null;});int beforeOversizedSend=actions.size();click(requireTag("telegram-send"));
+            check(event(beforeOversizedSend,"draft")==null&&event(beforeOversizedSend,"send")==null,"16001-character visible draft emits neither a truncated draft nor send when Send is pressed");
+            check(ui(()->draft.getText().toString()).equals(oversized),"oversized refusal retains every visible character for correction");
+            ui(()->{draft.setText("EXACT NEW SYNTHETIC DRAFT\nKeep every character.");return null;});
+            JSONObject recording=base(true,"atlas");recording.put("recording",true);render(recording);int beforeRecordStop=actions.size();click(requireTag("telegram-mic"));
+            check(exactScope(event(beforeRecordStop,"recordStop"),"atlas")&&event(beforeRecordStop,"record")==null,"active recording microphone stops exact-scope recording even when new-record capability is false");
+            JSONObject staged=base(true,"atlas");staged.put("attachments",new JSONArray().put(json("id","synthetic-file","name","Retained staged file.txt","state","ready")));render(staged);int beforeComposer=actions.size();click(requireTag("telegram-pending"));
+            check(exactScope(event(beforeComposer,"composer"),"atlas")&&event(beforeComposer,"tools")==null,"pending attachment opens complete exact-scope composer rather than unrelated action modal");
+            render(base(true,"atlas"));int beforeAdvanced=actions.size();click(requireTag("telegram-options"));dialogChoice("Advanced conversation controls");
+            check(exactScope(event(beforeAdvanced,"tools"),"atlas"),"explicit Advanced conversation controls retains existing tools-dialog action");
             int beforeControls=actions.size();openRunOptions();dialogChoice("Steer unavailable · not dispatched");check(event(beforeControls,"send")==null,"unsupported Steer cannot silently queue or send");
             openRunOptions();dialogChoice("Stop unavailable for the observed run");check(event(beforeControls,"stop")==null,"unsupported Stop does not dispatch a session-wide fallback");
             click(requireTag("telegram-pin-options"));dialogChoice("Next pin");
@@ -153,7 +190,8 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             render(activityModel);click(requireTag("telegram-expand-work-1"));check(tag("telegram-evidence-work-1")!=null,"native operational event expands supplied same-revision evidence");
             render(new JSONObject(activityModel.toString()));check(tag("telegram-evidence-work-1")!=null,"unchanged native observation retains expanded detail");
             activityModel.getJSONArray("activity").getJSONObject(0).put("revision","revision-b").put("detail","NEW RESULT NOT THE OLD REVISION");render(activityModel);check(tag("telegram-evidence-work-1")==null,"changed observation revision closes evidence instead of silently replacing it");
-            JSONObject enlarged=base(true,"atlas");enlarged.put("appScale",1.5);render(enlarged);assertLayout("150 percent app scale");
+            JSONObject enlarged=base(true,"atlas");enlarged.put("appScale",1.5);enlarged.put("draft",repeat("Retain this long exact draft. ",12));render(enlarged);assertLayout("150 percent app scale");
+            check(ui(()->((EditText)requireTag("telegram-draft")).getText().toString()).equals(enlarged.getString("draft")),"bounded enlarged editor retains the complete long draft without truncation");
             check(actions.stream().allMatch(e->!"media".equals(e.optString("action"))&&!"read".equals(e.optString("action"))&&!"stopAudio".equals(e.optString("action"))),"changed surface checks performed no playback, synthesis or agent dispatch");
             result.putString("stream","Telegram surface checks passed: "+checks+". Actual native components/dialogs; isolated synthetic listener, unpaired APK, no production input/audio. Physical acceptance remains unverified.\n");finish(0,result);
         } catch(Throwable error) {result.putString("stream","Telegram surface checks failed after "+checks+": "+error+"\n");android.util.Log.e("DracoTelegramCheck","FAIL",error);finish(1,result);}

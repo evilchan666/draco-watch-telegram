@@ -21,7 +21,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps({
  'watchSource':sys.argv[2],
  'telegramBase':'f32ffeec763f0bdbf4bec25b52d654f77bff733d',
  'integration':'native Telegram component subset over existing Watch backend',
- 'loginMigration':False,'publiclyPublished':False,
+ 'loginMigration':False,'updaterPublished':False,
  'physicalAcceptance':'unverified'},indent=2)+'\n')
 PY
 cat > "$module_root/README.md" <<'DOC'

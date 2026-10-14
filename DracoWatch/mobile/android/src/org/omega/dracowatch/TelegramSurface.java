@@ -3,7 +3,14 @@ package org.omega.dracowatch;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Canvas;
+import android.graphics.ColorFilter;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.PixelFormat;
+import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.InputType;
@@ -73,11 +80,13 @@ public final class TelegramSurface extends FrameLayout {
     private static final String[] VIEW_LABELS = {
         "Chats", "Chamber", "Environment", "Activity", "Settings"
     };
+    private static final String[] COMPACT_VIEW_LABELS = {"Chats", "Room", "World", "Live", "More"};
     private static final double[] RATES = {.5, .75, 1, 1.25, 1.5, 2};
 
     private final Actions actions;
     private final LinearLayout shell;
     private final LinearLayout header;
+    private final LinearLayout heading;
     private final ImageView backButton;
     private final BackDrawable backDrawable;
     private final TextView title;
@@ -125,6 +134,8 @@ public final class TelegramSurface extends FrameLayout {
     private JSONObject actionScope;
     private String submittedDraft;
     private String lastFocusMessage = "";
+    private boolean compactLayout;
+    private boolean shortLayout;
 
     public TelegramSurface(Context context, Actions actions) {
         super(context);
@@ -141,7 +152,7 @@ public final class TelegramSurface extends FrameLayout {
         header.setBackgroundColor(PANEL);
         header.setPadding(dp(4), dp(5), dp(4), dp(4));
         shell.addView(header, new LinearLayout.LayoutParams(-1, -2));
-        LinearLayout heading = horizontal();
+        heading = horizontal();
         header.addView(heading, new LinearLayout.LayoutParams(-1, -2));
 
         backDrawable = new BackDrawable(context, false);
@@ -158,11 +169,14 @@ public final class TelegramSurface extends FrameLayout {
         headingText.setPadding(dp(4), 0, dp(4), 0);
         title = text(19, TEXT, true);
         title.setTag("telegram-title");
-        title.setMaxLines(2);
+        title.setMaxLines(1);
         title.setEllipsize(TextUtils.TruncateAt.END);
         subtitle = text(12, SECONDARY, false);
         subtitle.setTag("telegram-status");
-        subtitle.setMaxLines(3);
+        subtitle.setMaxLines(1);
+        subtitle.setEllipsize(TextUtils.TruncateAt.END);
+        title.setOnClickListener(v -> showWorkCoverage());
+        subtitle.setOnClickListener(v -> showWorkCoverage());
         headingText.addView(title);
         headingText.addView(subtitle);
         heading.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
@@ -170,12 +184,14 @@ public final class TelegramSurface extends FrameLayout {
         runStop = button("Stop", "Stop the exact observed active run; unavailable controls dispatch nothing");
         runStop.setTag("telegram-stop-run");
         runStop.setTextColor(WARNING);
+        icon(runStop, "stop", WARNING);
         runStop.setOnClickListener(v -> available("abort", "stop", "No supported Stop target is currently observed. Nothing was dispatched."));
         heading.addView(runStop, new LinearLayout.LayoutParams(-2, -2));
 
         Button overflow = button("⋮", "Conversation and activity options");
         overflow.setTag("telegram-options");
         overflow.setTextSize(23);
+        icon(overflow, "more", TEXT);
         overflow.setOnClickListener(v -> showOptions());
         heading.addView(overflow, new LinearLayout.LayoutParams(dp(44), -2));
 
@@ -203,6 +219,7 @@ public final class TelegramSurface extends FrameLayout {
         });
         Button pinMenu = button("⋮", "Pinned message navigation and history");
         pinMenu.setTag("telegram-pin-options");
+        icon(pinMenu, "more", SECONDARY);
         pinMenu.setOnClickListener(v -> showPinOptions());
         pinBar.addView(pinMenu, new LinearLayout.LayoutParams(dp(44), -2));
 
@@ -211,7 +228,7 @@ public final class TelegramSurface extends FrameLayout {
         work.setMaxLines(2);
         work.setEllipsize(TextUtils.TruncateAt.END);
         work.setPadding(dp(12), dp(4), dp(12), dp(4));
-        work.setOnClickListener(v -> emit("details"));
+        work.setOnClickListener(v -> showWorkCoverage());
         shell.addView(work, new LinearLayout.LayoutParams(-1, -2));
 
         history = text(12, WARNING, false);
@@ -262,7 +279,9 @@ public final class TelegramSurface extends FrameLayout {
         voiceBar.setBackgroundColor(PANEL);
         voiceBar.setPadding(dp(8), dp(2), dp(5), dp(2));
         voice = text(12, SECONDARY, false);
-        voice.setMaxLines(2);
+        voice.setMaxLines(1);
+        voice.setEllipsize(TextUtils.TruncateAt.END);
+        voice.setOnClickListener(v -> showText("Voice playback state", payload.optString("voiceStatus", "Voice status unavailable")));
         voiceBar.addView(voice, new LinearLayout.LayoutParams(0, -2, 1));
         speed = button("1×", "Change pitch-preserving audio playback speed");
         speed.setTag("telegram-speed");
@@ -270,6 +289,7 @@ public final class TelegramSurface extends FrameLayout {
         voiceBar.addView(speed, new LinearLayout.LayoutParams(-2, -2));
         stopAudio = button("Stop audio", "Stop audio immediately");
         stopAudio.setTag("telegram-stop-audio");
+        icon(stopAudio, "stop", TEXT);
         stopAudio.setOnClickListener(v -> emit("stopAudio"));
         voiceBar.addView(stopAudio, new LinearLayout.LayoutParams(-2, -2));
         shell.addView(voiceBar, new LinearLayout.LayoutParams(-1, -2));
@@ -284,8 +304,8 @@ public final class TelegramSurface extends FrameLayout {
         reply.setMaxLines(3);
         reply.setEllipsize(TextUtils.TruncateAt.END);
         replyTop.addReplyView(reply, new FrameLayout.LayoutParams(-1, -2));
-        replyTop.setContentDescription("Reply context. Tap to open message tools.");
-        replyTop.setOnClickListener(v -> emit("tools"));
+        replyTop.setContentDescription("Reply context. Tap to open the complete composer and manage the reply.");
+        replyTop.setOnClickListener(v -> emit("composer"));
         compose.addView(replyTop, new LinearLayout.LayoutParams(-1, -2));
 
         pending = text(12, SECONDARY, false);
@@ -293,7 +313,7 @@ public final class TelegramSurface extends FrameLayout {
         pending.setPadding(dp(12), dp(4), dp(12), dp(5));
         pending.setMaxLines(3);
         pending.setEllipsize(TextUtils.TruncateAt.END);
-        pending.setOnClickListener(v -> emit("tools"));
+        pending.setOnClickListener(v -> emit("composer"));
         compose.addView(pending, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout editor = horizontal();
@@ -301,6 +321,7 @@ public final class TelegramSurface extends FrameLayout {
         compose.addView(editor, new LinearLayout.LayoutParams(-1, -2));
         attach = button("＋", "Attach files");
         attach.setTag("telegram-attach");
+        icon(attach, "attach", SECONDARY);
         attach.setOnClickListener(v -> available("attachments", "attach", "Attachments are unavailable in this conversation."));
         editor.addView(attach, new LinearLayout.LayoutParams(dp(42), -2));
         input = new EditText(context);
@@ -314,6 +335,10 @@ public final class TelegramSurface extends FrameLayout {
         input.setPadding(dp(12), dp(8), dp(12), dp(8));
         input.setMinLines(1);
         input.setMaxLines(5);
+        input.setMaxHeight(dp(112));
+        input.setVerticalScrollBarEnabled(true);
+        input.setOverScrollMode(OVER_SCROLL_IF_CONTENT_SCROLLS);
+        input.setGravity(Gravity.TOP | Gravity.START);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
         input.addTextChangedListener(new TextWatcher() {
@@ -330,11 +355,16 @@ public final class TelegramSurface extends FrameLayout {
         microphone = button("Mic", "Record voice message");
         microphone.setTag("telegram-mic");
         microphone.setTextSize(12);
-        microphone.setOnClickListener(v -> available("voice", "record", "Recording is unavailable in this conversation."));
+        icon(microphone, "microphone", SECONDARY);
+        microphone.setOnClickListener(v -> {
+            if (payload.optBoolean("recording")) emit("recordStop");
+            else available("voice", "record", "Recording is unavailable in this conversation.");
+        });
         editor.addView(microphone, new LinearLayout.LayoutParams(dp(45), -2));
         send = button("Send", "Send message; long press for Queue, Steer and Stop");
         send.setTag("telegram-send");
         send.setTextColor(ACCENT);
+        icon(send, "send", ACCENT);
         send.setOnClickListener(v -> sendMode("send"));
         send.setOnLongClickListener(v -> {
             showSendOptions();
@@ -351,9 +381,11 @@ public final class TelegramSurface extends FrameLayout {
             TextView tab = text(11, SECONDARY, true);
             tab.setText(VIEW_LABELS[i]);
             tab.setGravity(Gravity.CENTER);
-            tab.setPadding(dp(2), dp(10), dp(2), dp(10));
+            tab.setPadding(dp(2), dp(5), dp(2), dp(5));
             tab.setMinHeight(dp(48));
-            tab.setMaxLines(2);
+            tab.setMaxLines(1);
+            tab.setEllipsize(TextUtils.TruncateAt.END);
+            tab.setCompoundDrawablePadding(dp(3));
             tab.setTag("telegram-nav-" + destination);
             tab.setContentDescription("Open " + VIEW_LABELS[i]);
             tab.setOnClickListener(v -> emit("view", data("view", destination)));
@@ -399,6 +431,7 @@ public final class TelegramSurface extends FrameLayout {
         }
         chat = nextChat;
         viewName = nextView;
+        updateLayoutMode();
         updateChrome(changedConversation);
         updateRows(changedConversation);
         focusRequestedMessage();
@@ -422,14 +455,30 @@ public final class TelegramSurface extends FrameLayout {
         return false;
     }
 
+    @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
+        if (jump == null || !showing()) return;
+        updateLayoutMode();
+        chromeSignature = "";
+        updateChrome(false);
+    }
+
+    private void updateLayoutMode() {
+        int height = getHeight() > 0 ? getHeight() : dp(getResources().getConfiguration().screenHeightDp);
+        int width = getWidth() > 0 ? getWidth() : dp(getResources().getConfiguration().screenWidthDp);
+        shortLayout = height > 0 && height < dp(520);
+        compactLayout = shortLayout || appScale * nativeFontScale >= 1.45f || width < dp(360);
+    }
+
     private void updateChrome(boolean changedConversation) {
         JSONObject can = payload.optJSONObject("can");
         String signature = payload.optString("name") + payload.optString("status") + payload.optBoolean("live")
             + payload.optString("historyNote") + payload.optString("workSummary") + payload.optString("voiceStatus")
             + payload.optDouble("playbackRate", 1) + payload.optString("replyLabel")
-            + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins"));
+            + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins")) + compactLayout + shortLayout + payload.optBoolean("recording");
         if (!signature.equals(chromeSignature)) {
             chromeSignature = signature;
+            placePinBanner();
             int color = color(payload.opt("color"), ACCENT);
             title.setText(chat ? payload.optString("name", "Agent conversation")
                 : "activity".equals(viewName) ? "Live activity" : "DRACO Watch");
@@ -440,28 +489,66 @@ public final class TelegramSurface extends FrameLayout {
             String state = payload.optString("status", "Status unavailable");
             String live = payload.optBoolean("live") ? "Live" : "Not live · retained observations";
             setText(subtitle, live + " · " + state);
+            subtitle.setContentDescription(live + " · " + state + ". Tap for complete state and coverage.");
+            subtitle.setVisibility(shortLayout ? GONE : VISIBLE);
             subtitle.setTextColor(payload.optBoolean("live") ? SECONDARY : WARNING);
-            setOptional(work, payload.optString("workSummary"));
-            setOptional(history, payload.optString("historyNote"));
-            work.setContentDescription("Current work summary. Open work details.");
+            if (compactLayout) {
+                setOptional(work, shortLayout ? "" : "Work & coverage  ›");
+                history.setVisibility(GONE);
+                work.setContentDescription(payload.optString("workSummary") + ". " + payload.optString("historyNote") + ". Tap for complete work and coverage details.");
+            } else {
+                setOptional(work, payload.optString("workSummary"));
+                work.setMaxLines(1);
+                setOptional(history, payload.optString("historyNote"));
+                history.setMaxLines(1);
+                history.setEllipsize(TextUtils.TruncateAt.END);
+                work.setContentDescription("Current work summary. Open complete work and coverage details.");
+            }
             voiceBar.setVisibility(chat ? VISIBLE : GONE);
             String voiceState = payload.optString("voiceStatus");
-            setText(voice, voiceState.isEmpty() ? "Voice status unavailable · text remains readable" : voiceState);
+            String fullVoiceState = voiceState.isEmpty() ? "Voice status unavailable · text remains readable" : voiceState;
+            setText(voice, shortLayout ? "Audio" : compactLayout ? fullVoiceState.split("·", 2)[0].trim() : fullVoiceState);
+            voice.setContentDescription(fullVoiceState + ". Tap for full playback state.");
             speed.setText(rateLabel(payload.optDouble("playbackRate", 1)));
             setOptional(reply, payload.optString("replyLabel"));
             replyTop.setVisibility(payload.optString("replyLabel").isEmpty() ? GONE : VISIBLE);
+            reply.setMaxLines(compactLayout ? 1 : 3);
+            pending.setMaxLines(compactLayout ? 1 : 3);
+            replyTop.setContentDescription(payload.optString("replyLabel") + ". Tap for the complete composer, including clear-reply controls.");
+            int editorLines = shortLayout ? 1 : compactLayout ? 2 : 4;
+            int editorCap = dp(shortLayout ? 72 : compactLayout ? 96 : 112);
+            int editorPadding = input.getCompoundPaddingTop() + input.getCompoundPaddingBottom();
+            int editorLineHeight = input.getLineHeight();
+            while (editorLines > 1 && editorLineHeight * editorLines + editorPadding > editorCap) editorLines--;
+            input.setMaxLines(editorLines);
+            // TextView.setMaxHeight selects pixel mode and replaces its line
+            // bound. Use the actual scaled line metrics rather than a fixed
+            // 112dp cap, otherwise compact mode still reserves a giant editor.
+            input.setMaxHeight(Math.max(dp(44), Math.min(editorCap, editorLineHeight * editorLines + editorPadding)));
+            list.setPadding(dp(6), dp(8), dp(6), dp(shortLayout ? 8 : 12));
             compose.setVisibility(chat ? VISIBLE : GONE);
             send.setAlpha(capability("send") ? 1 : .55f);
             attach.setAlpha(capability("attachments") ? 1 : .55f);
-            microphone.setAlpha(capability("voice") ? 1 : .55f);
+            boolean recording = payload.optBoolean("recording");
+            microphone.setAlpha(recording || capability("voice") ? 1 : .55f);
+            icon(microphone, recording ? "stop" : "microphone", recording ? WARNING : SECONDARY);
+            microphone.setContentDescription(recording ? "Finish recording and attach voice message" : "Record voice message");
             input.setHint(capability("send") ? "Message" : "Draft · sending currently unavailable");
             for (int i = 0; i < navigation.size(); i++) {
-                boolean selected = VIEWS[i].equals(viewName);
+                boolean selected = VIEWS[i].equals(chat ? "chats" : viewName);
                 TextView tab = navigation.get(i);
                 tab.setTextColor(selected ? color : SECONDARY);
                 tab.setBackground(selected ? round(PANEL_LIGHT, 12) : null);
                 tab.setSelected(selected);
+                tab.setText(shortLayout ? "" : compactLayout ? COMPACT_VIEW_LABELS[i] : VIEW_LABELS[i]);
+                // An icon-only tab must not reserve an invisible scaled text
+                // line. Actual labels retain their full app/system SP scaling.
+                tab.setTextSize(shortLayout ? 0 : 11 * appScale);
+                tab.setIncludeFontPadding(!shortLayout);
+                tab.setCompoundDrawablesWithIntrinsicBounds(null, new Glyph(VIEWS[i], selected ? color : SECONDARY), null, null);
+                tab.setMinHeight(dp(shortLayout ? 44 : 52));
             }
+            jump.setText(compactLayout ? "↓" : "↓ Latest");
             pinLine.setColor(color);
             pinTitle.setTextColor(color);
             renderPin();
@@ -500,6 +587,7 @@ public final class TelegramSurface extends FrameLayout {
             append(text, "Outbox · " + state + (item.optString("note").isEmpty() ? "" : " · " + item.optString("note")));
         }
         setOptional(pending, text.toString());
+        pending.setMaxLines(compactLayout ? 1 : 3);
         pending.setContentDescription(text + ". Tap to open attachment and outbox controls.");
     }
 
@@ -562,9 +650,40 @@ public final class TelegramSurface extends FrameLayout {
         JSONObject pin = pins.optJSONObject(pinPosition);
         if (pin == null) return;
         pinLine.set(pinPosition, count, true);
-        pinTitle.setText("Pinned message" + (count > 1 ? " · " + (pinPosition + 1) + "/" + count : "")
-            + (pin.optBoolean("sourceAvailable", true) ? "" : " · Saved snapshot, not live"));
-        pinPreview.setText(pin.optString("title", pin.optString("text", "Pinned message unavailable in this history window")));
+        String fullTitle = "Pinned message" + (count > 1 ? " · " + (pinPosition + 1) + "/" + count : "")
+            + (pin.optBoolean("sourceAvailable", true) ? "" : " · Saved snapshot, not live");
+        String preview = pin.optString("title", pin.optString("text", "Pinned message unavailable in this history window"));
+        pinTitle.setMaxLines(1);
+        pinTitle.setEllipsize(TextUtils.TruncateAt.END);
+        pinTitle.setText(compactLayout ? "Pinned" + (count > 1 ? " " + (pinPosition + 1) + "/" + count : "")
+            + (pin.optBoolean("sourceAvailable", true) ? " · " : " · Saved · ") + preview : fullTitle);
+        pinPreview.setText(preview);
+        pinPreview.setVisibility(compactLayout ? GONE : VISIBLE);
+        pinBar.setContentDescription(fullTitle + ". " + preview + ". Tap to open; options include pin navigation, history and unpin.");
+    }
+
+    private void placePinBanner() {
+        int width = getWidth() > 0 ? getWidth() : dp(getResources().getConfiguration().screenWidthDp);
+        boolean inline = shortLayout && width >= dp(600);
+        ViewGroup target = inline ? heading : shell;
+        ViewGroup current = (ViewGroup) pinBar.getParent();
+        if (current != target) {
+            if (current != null) current.removeView(pinBar);
+            if (inline) {
+                // Wide landscape can retain the real Telegram pin line/banner
+                // beside the chat title without consuming another content row.
+                heading.addView(pinBar, 2, new LinearLayout.LayoutParams(Math.min(dp(300), width / 3), -2));
+            } else {
+                shell.addView(pinBar, 1, new LinearLayout.LayoutParams(-1, -2));
+            }
+        } else if (inline) {
+            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) pinBar.getLayoutParams();
+            int desired = Math.min(dp(300), width / 3);
+            if (params.width != desired) {
+                params.width = desired;
+                pinBar.setLayoutParams(params);
+            }
+        }
     }
 
     private JSONObject currentPin() {
@@ -638,9 +757,11 @@ public final class TelegramSurface extends FrameLayout {
         ArrayList<Runnable> commands = new ArrayList<>();
         option(labels, commands, "Search this history", this::showSearch);
         if (chat) {
+            option(labels, commands, "Pinned messages", this::showPinOptions);
             option(labels, commands, "Pinned message history", this::showPinHistory);
             option(labels, commands, "Send / Queue / Steer / Stop", this::showSendOptions);
-            option(labels, commands, "Files, drafts and outbox", () -> emit("tools"));
+            option(labels, commands, "Files, drafts and outbox", () -> emit("composer"));
+            option(labels, commands, "Advanced conversation controls", () -> emit("tools"));
             option(labels, commands, "Commands", () -> emit("commands"));
             option(labels, commands, "Older messages", () -> emit("older"));
         }
@@ -649,6 +770,16 @@ public final class TelegramSurface extends FrameLayout {
         option(labels, commands, "Stop audio", () -> emit("stopAudio"));
         new AlertDialog.Builder(getContext()).setTitle(chat ? payload.optString("name", "Conversation") : "Watch options")
             .setItems(labels.toArray(new String[0]), (dialog, which) -> commands.get(which).run()).show();
+    }
+
+    private void showWorkCoverage() {
+        StringBuilder content = new StringBuilder();
+        append(content, payload.optBoolean("live") ? "Live observations" : "Not live · retained observations");
+        append(content, payload.optString("status", "Status unavailable"));
+        append(content, "Observed: " + time(payload.opt("observedAt")));
+        append(content, "\nWork\n" + payload.optString("workSummary", "No work summary supplied."));
+        append(content, "\nCoverage\n" + payload.optString("historyNote", "History coverage not supplied."));
+        showText("Work, state and coverage", content.toString());
     }
 
     private void showSendOptions() {
@@ -663,7 +794,7 @@ public final class TelegramSurface extends FrameLayout {
                 else if (which == 1) sendMode("queue");
                 else if (which == 2) sendMode("steer");
                 else if (which == 3) available("abort", "stop", "No supported Stop target is currently observed. Nothing was dispatched.");
-                else if (which == 4) emit("tools");
+                else if (which == 4) emit("composer");
                 else emit("commands");
             })).show();
     }
@@ -674,9 +805,16 @@ public final class TelegramSurface extends FrameLayout {
                 : "This action is unavailable in the current observed state. Your draft is retained.");
             return;
         }
-        submittedDraft = input.getText().toString();
+        String visibleDraft = input.getText().toString();
+        if (visibleDraft.length() > 16000) {
+            toast("This draft exceeds 16,000 characters. Nothing was sent or truncated; shorten the draft or attach it as a file.");
+            return;
+        }
+        submittedDraft = visibleDraft;
         emit("draft", data("text", submittedDraft));
-        emit("send", data("mode", mode));
+        JSONObject request = data("mode", mode);
+        try { request.put("text", visibleDraft); } catch (JSONException ignored) { }
+        emit("send", request);
         // Only the authoritative returned draft/custody state can clear input.
     }
 
@@ -1167,6 +1305,98 @@ public final class TelegramSurface extends FrameLayout {
         result.setPadding(dp(9), dp(5), dp(9), dp(5));
         result.setBackground(round(Color.TRANSPARENT, 14));
         return result;
+    }
+
+    private void icon(Button button, String name, int color) {
+        button.setText("");
+        // This control has a real drawable and accessible name, not a tiny
+        // text glyph; remove only its phantom empty text-line measurement.
+        button.setTextSize(0);
+        button.setIncludeFontPadding(false);
+        baseTextSizes.put(button, 0f);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp(9), dp(9), dp(9), dp(9));
+        button.setMinWidth(dp(42));
+        button.setMinimumWidth(dp(42));
+        button.setMinHeight(dp(44));
+        button.setMinimumHeight(dp(44));
+        button.setCompoundDrawablesWithIntrinsicBounds(new Glyph(name, color), null, null, null);
+    }
+
+    /** Small native vector controls remain legible targets without shrinking scaled text. */
+    private final class Glyph extends Drawable {
+        private final String kind;
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final int intrinsic = dp(24);
+
+        Glyph(String kind, int color) {
+            this.kind = kind;
+            paint.setColor(color);
+            paint.setStrokeWidth(1.8f);
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setStrokeJoin(Paint.Join.ROUND);
+        }
+
+        @Override public void draw(Canvas canvas) {
+            int save = canvas.save();
+            canvas.translate(getBounds().left, getBounds().top);
+            canvas.scale(getBounds().width() / 24f, getBounds().height() / 24f);
+            paint.setStyle(Paint.Style.STROKE);
+            if ("more".equals(kind)) {
+                paint.setStyle(Paint.Style.FILL);
+                for (int y = 5; y <= 19; y += 7) canvas.drawCircle(12, y, 1.7f, paint);
+            } else if ("stop".equals(kind)) {
+                paint.setStyle(Paint.Style.FILL);
+                canvas.drawRoundRect(new RectF(6, 6, 18, 18), 2, 2, paint);
+            } else if ("attach".equals(kind)) {
+                canvas.drawLine(12, 4, 12, 20, paint);
+                canvas.drawLine(4, 12, 20, 12, paint);
+            } else if ("microphone".equals(kind)) {
+                canvas.drawRoundRect(new RectF(8, 2, 16, 15), 4, 4, paint);
+                canvas.drawArc(new RectF(5, 6, 19, 19), 0, 180, false, paint);
+                canvas.drawLine(12, 19, 12, 22, paint);
+                canvas.drawLine(8, 22, 16, 22, paint);
+            } else if ("send".equals(kind)) {
+                Path path = new Path();
+                path.moveTo(3, 3); path.lineTo(22, 12); path.lineTo(3, 21);
+                path.lineTo(6, 13); path.lineTo(16, 12); path.lineTo(6, 11); path.close();
+                canvas.drawPath(path, paint);
+            } else if ("chats".equals(kind)) {
+                canvas.drawRoundRect(new RectF(3, 3, 21, 18), 3, 3, paint);
+                Path path = new Path(); path.moveTo(7, 18); path.lineTo(5, 22); path.lineTo(13, 18);
+                canvas.drawPath(path, paint);
+            } else if ("chamber".equals(kind)) {
+                canvas.drawCircle(12, 12, 9, paint);
+                canvas.drawOval(new RectF(7, 3, 17, 21), paint);
+                canvas.drawLine(3, 12, 21, 12, paint);
+            } else if ("environment".equals(kind)) {
+                Path path = new Path(); path.moveTo(12, 2); path.lineTo(21, 7); path.lineTo(21, 17);
+                path.lineTo(12, 22); path.lineTo(3, 17); path.lineTo(3, 7); path.close();
+                canvas.drawPath(path, paint);
+                canvas.drawLine(12, 12, 12, 22, paint);
+                canvas.drawLine(3, 7, 12, 12, paint);
+                canvas.drawLine(21, 7, 12, 12, paint);
+            } else if ("activity".equals(kind)) {
+                Path path = new Path(); path.moveTo(2, 13); path.lineTo(6, 13); path.lineTo(9, 4);
+                path.lineTo(14, 21); path.lineTo(18, 10); path.lineTo(22, 10);
+                canvas.drawPath(path, paint);
+            } else if ("settings".equals(kind)) {
+                canvas.drawCircle(12, 12, 6.5f, paint);
+                canvas.drawCircle(12, 12, 2.5f, paint);
+                for (int angle = 0; angle < 360; angle += 45) {
+                    double radians = Math.toRadians(angle);
+                    canvas.drawLine(12 + 7 * (float) Math.cos(radians), 12 + 7 * (float) Math.sin(radians),
+                        12 + 10 * (float) Math.cos(radians), 12 + 10 * (float) Math.sin(radians), paint);
+                }
+            }
+            canvas.restoreToCount(save);
+        }
+
+        @Override public int getIntrinsicWidth() { return intrinsic; }
+        @Override public int getIntrinsicHeight() { return intrinsic; }
+        @Override public void setAlpha(int alpha) { paint.setAlpha(alpha); invalidateSelf(); }
+        @Override public void setColorFilter(ColorFilter filter) { paint.setColorFilter(filter); invalidateSelf(); }
+        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
     }
 
     private LinearLayout vertical() {
