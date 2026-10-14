@@ -3,7 +3,7 @@
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,
-  "updaterPublished": false,
+  "updaterPublished": true,
   "physicalAcceptance": "unverified",
   "taskProgressBackend": "staged separately in Watch source; not activated",
   "idleBubbleExpiryMs": 60000,
@@ -16,5 +16,7 @@
   "packagedWatchSource": "fd714655c0f6c655c392f65fe50a7cf660c8927e",
   "versionName": "0.3.0",
   "versionCode": 19,
-  "releaseState": "signed and verified; private publication next"
+  "releaseState": "published privately and exact pinned updater download verified; physical installation unverified",
+  "apkSha256": "f5ba786b42feea1dedf60776512256e5ec6bb250e14c4482c5ad15c96296f882",
+  "hostBackend": "unchanged existing service; newer Watch backend and gateway producer repairs remain staged separately"
 }
