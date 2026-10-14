@@ -1,0 +1,11 @@
+Telegram-derived Android UI subset
+
+Upstream Telegram for Android by Nikolai Kudashov and Telegram contributors.
+Original component notices and exact source copies are retained in upstream/.
+Upstream commit: f32ffeec763f0bdbf4bec25b52d654f77bff733d
+Source: https://github.com/evilchan666/draco-watch-telegram
+License: GNU GPL version 2 or later. See LICENSE.
+
+Watch adapters and transformations: ATLAS, operator-authorized Telegram3412,
+2026-10-14. See ../TELEGRAM-PROVENANCE.md. No Telegram network/account/login
+service or Telegram-core stub is supplied by this subset.

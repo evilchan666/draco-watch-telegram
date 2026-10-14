@@ -1,0 +1,8 @@
+{
+  "watchSource": "4c4218acd25e2a33c896850e1e59bc510139a3b3",
+  "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
+  "integration": "native Telegram component subset over existing Watch backend",
+  "loginMigration": false,
+  "publiclyPublished": false,
+  "physicalAcceptance": "unverified"
+}

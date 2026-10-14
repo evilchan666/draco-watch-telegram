@@ -1,0 +1,1321 @@
+package org.omega.dracowatch;
+
+import android.app.AlertDialog;
+import android.content.Context;
+import android.graphics.Color;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.text.Editable;
+import android.text.InputType;
+import android.text.TextUtils;
+import android.text.TextWatcher;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.view.inputmethod.EditorInfo;
+import android.widget.AbsListView;
+import android.widget.BaseAdapter;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ListView;
+import android.widget.TextView;
+import android.widget.Toast;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+import org.omega.dracowatch.telegram.BackDrawable;
+import org.omega.dracowatch.telegram.MessageDrawable;
+import org.omega.dracowatch.telegram.PinnedLineView;
+import org.telegram.ui.Components.ChatActivityEnterTopView;
+
+import java.text.DateFormat;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.Collections;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.WeakHashMap;
+
+/**
+ * Native Watch conversation surface using the actual Telegram-derived message,
+ * back-navigation, pin-line and enter-top components vendored with this client.
+ *
+ * This is only a renderer and an action adapter. It neither logs into Telegram
+ * nor sends gateway requests; Watch's existing owner-bound bridge remains the
+ * sole state/custody authority. In particular a rendered status is never a new
+ * delivery, injection, or physical-device acceptance receipt.
+ */
+public final class TelegramSurface extends FrameLayout {
+    public interface Actions {
+        void send(String action, JSONObject data);
+    }
+
+    private static final int BACKGROUND = 0xff111c25;
+    private static final int PANEL = 0xff172734;
+    private static final int PANEL_LIGHT = 0xff203544;
+    private static final int INCOMING = 0xff223645;
+    private static final int OUTGOING = 0xff31564c;
+    private static final int TEXT = 0xfff2f5f7;
+    private static final int SECONDARY = 0xffb2c4d0;
+    private static final int ACCENT = 0xff83c9ef;
+    private static final int WARNING = 0xffffd38d;
+    static final int TAG_ROW_KEY = 0x7f0f3412;
+    private static final String[] VIEWS = {
+        "chats", "chamber", "environment", "activity", "settings"
+    };
+    private static final String[] VIEW_LABELS = {
+        "Chats", "Chamber", "Environment", "Activity", "Settings"
+    };
+    private static final double[] RATES = {.5, .75, 1, 1.25, 1.5, 2};
+
+    private final Actions actions;
+    private final LinearLayout shell;
+    private final LinearLayout header;
+    private final ImageView backButton;
+    private final BackDrawable backDrawable;
+    private final TextView title;
+    private final TextView subtitle;
+    private final Button runStop;
+    private final TextView work;
+    private final TextView history;
+    private final LinearLayout pinBar;
+    private final PinnedLineView pinLine;
+    private final TextView pinTitle;
+    private final TextView pinPreview;
+    private final LinearLayout voiceBar;
+    private final TextView voice;
+    private final Button speed;
+    private final Button stopAudio;
+    private final ListView list;
+    private final SurfaceAdapter adapter;
+    private final TextView jump;
+    private final LinearLayout compose;
+    private final ChatActivityEnterTopView replyTop;
+    private final TextView reply;
+    private final TextView pending;
+    private final EditText input;
+    private final Button attach;
+    private final Button microphone;
+    private final Button send;
+    private final LinearLayout footer;
+    private final List<TextView> navigation = new ArrayList<>();
+    private final Set<String> expanded = new HashSet<>();
+    private final WeakHashMap<TextView, Float> baseTextSizes = new WeakHashMap<>();
+
+    private JSONObject payload = new JSONObject();
+    private String identity = "";
+    private String viewName = "chats";
+    private String rowsSignature = "";
+    private String chromeSignature = "";
+    private boolean chat;
+    private boolean settingDraft;
+    private boolean visible;
+    private boolean listAtEnd = true;
+    private int pinPosition;
+    private String pendingSignature = "";
+    private float appScale = 1f;
+    private JSONObject actionScope;
+    private String submittedDraft;
+    private String lastFocusMessage = "";
+
+    public TelegramSurface(Context context, Actions actions) {
+        super(context);
+        this.actions = actions;
+        setTag("telegram-surface");
+        setBackgroundColor(BACKGROUND);
+        setVisibility(GONE);
+
+        shell = vertical();
+        addView(shell, new FrameLayout.LayoutParams(-1, -1));
+
+        header = vertical();
+        header.setBackgroundColor(PANEL);
+        header.setPadding(dp(4), dp(5), dp(4), dp(4));
+        shell.addView(header, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout heading = horizontal();
+        header.addView(heading, new LinearLayout.LayoutParams(-1, -2));
+
+        backDrawable = new BackDrawable(context, false);
+        backDrawable.setColor(TEXT);
+        backButton = new ImageView(context);
+        backButton.setTag("telegram-back");
+        backButton.setImageDrawable(backDrawable);
+        backButton.setPadding(dp(14), dp(12), dp(14), dp(12));
+        backButton.setContentDescription("Back to agent conversations");
+        backButton.setOnClickListener(v -> back());
+        heading.addView(backButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        LinearLayout headingText = vertical();
+        headingText.setPadding(dp(4), 0, dp(4), 0);
+        title = text(19, TEXT, true);
+        title.setTag("telegram-title");
+        title.setMaxLines(2);
+        title.setEllipsize(TextUtils.TruncateAt.END);
+        subtitle = text(12, SECONDARY, false);
+        subtitle.setTag("telegram-status");
+        subtitle.setMaxLines(3);
+        headingText.addView(title);
+        headingText.addView(subtitle);
+        heading.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
+
+        runStop = button("Stop", "Stop the exact observed active run; unavailable controls dispatch nothing");
+        runStop.setTag("telegram-stop-run");
+        runStop.setTextColor(WARNING);
+        runStop.setOnClickListener(v -> available("abort", "stop", "No supported Stop target is currently observed. Nothing was dispatched."));
+        heading.addView(runStop, new LinearLayout.LayoutParams(-2, -2));
+
+        Button overflow = button("⋮", "Conversation and activity options");
+        overflow.setTag("telegram-options");
+        overflow.setTextSize(23);
+        overflow.setOnClickListener(v -> showOptions());
+        heading.addView(overflow, new LinearLayout.LayoutParams(dp(44), -2));
+
+        pinBar = horizontal();
+        pinBar.setTag("telegram-pinned-banner");
+        pinBar.setBackgroundColor(PANEL_LIGHT);
+        pinBar.setPadding(dp(10), dp(5), dp(4), dp(5));
+        shell.addView(pinBar, new LinearLayout.LayoutParams(-1, -2));
+        pinLine = new PinnedLineView(context, ACCENT);
+        pinBar.addView(pinLine, new LinearLayout.LayoutParams(dp(3), dp(44)));
+        LinearLayout pinText = vertical();
+        pinText.setPadding(dp(10), 0, dp(4), 0);
+        pinTitle = text(13, ACCENT, true);
+        pinPreview = text(13, TEXT, false);
+        pinPreview.setMaxLines(2);
+        pinPreview.setEllipsize(TextUtils.TruncateAt.END);
+        pinText.addView(pinTitle);
+        pinText.addView(pinPreview);
+        pinBar.addView(pinText, new LinearLayout.LayoutParams(0, -2, 1));
+        pinText.setContentDescription("Open pinned message. Long press for pin navigation and history.");
+        pinText.setOnClickListener(v -> openCurrentPin());
+        pinText.setOnLongClickListener(v -> {
+            showPinOptions();
+            return true;
+        });
+        Button pinMenu = button("⋮", "Pinned message navigation and history");
+        pinMenu.setTag("telegram-pin-options");
+        pinMenu.setOnClickListener(v -> showPinOptions());
+        pinBar.addView(pinMenu, new LinearLayout.LayoutParams(dp(44), -2));
+
+        work = text(12, SECONDARY, false);
+        work.setTag("telegram-work-summary");
+        work.setMaxLines(2);
+        work.setEllipsize(TextUtils.TruncateAt.END);
+        work.setPadding(dp(12), dp(4), dp(12), dp(4));
+        work.setOnClickListener(v -> emit("details"));
+        shell.addView(work, new LinearLayout.LayoutParams(-1, -2));
+
+        history = text(12, WARNING, false);
+        history.setTag("telegram-history-state");
+        history.setPadding(dp(12), dp(3), dp(12), dp(5));
+        history.setMaxLines(3);
+        history.setOnClickListener(v -> showText("History coverage", history.getText().toString()));
+        shell.addView(history, new LinearLayout.LayoutParams(-1, -2));
+
+        FrameLayout body = new FrameLayout(context);
+        shell.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
+        list = new ListView(context);
+        list.setTag("telegram-timeline");
+        list.setDivider(null);
+        list.setDividerHeight(0);
+        list.setClipToPadding(false);
+        list.setPadding(dp(6), dp(8), dp(6), dp(52));
+        list.setCacheColorHint(Color.TRANSPARENT);
+        list.setTranscriptMode(AbsListView.TRANSCRIPT_MODE_DISABLED);
+        adapter = new SurfaceAdapter();
+        list.setAdapter(adapter);
+        list.setOnScrollListener(new AbsListView.OnScrollListener() {
+            @Override public void onScrollStateChanged(AbsListView view, int state) { }
+            @Override public void onScroll(AbsListView view, int first, int count, int total) {
+                View last = list.getChildAt(count - 1);
+                listAtEnd = total == 0 || first + count >= total
+                    && (last == null || last.getBottom() <= list.getHeight() - list.getPaddingBottom() + dp(8));
+                updateJump();
+            }
+        });
+        body.addView(list, new FrameLayout.LayoutParams(-1, -1));
+
+        jump = text(13, TEXT, true);
+        jump.setText("↓ Latest");
+        jump.setTag("telegram-jump-latest");
+        jump.setGravity(Gravity.CENTER);
+        jump.setPadding(dp(15), dp(10), dp(15), dp(10));
+        jump.setBackground(round(PANEL_LIGHT, 24));
+        jump.setElevation(dp(4));
+        jump.setContentDescription("Jump to latest message or activity");
+        jump.setOnClickListener(v -> jumpToLatest());
+        FrameLayout.LayoutParams jumpParams = new FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM | Gravity.END);
+        jumpParams.setMargins(dp(8), dp(8), dp(10), dp(8));
+        body.addView(jump, jumpParams);
+
+        voiceBar = horizontal();
+        voiceBar.setTag("telegram-voice-controls");
+        voiceBar.setBackgroundColor(PANEL);
+        voiceBar.setPadding(dp(8), dp(2), dp(5), dp(2));
+        voice = text(12, SECONDARY, false);
+        voice.setMaxLines(2);
+        voiceBar.addView(voice, new LinearLayout.LayoutParams(0, -2, 1));
+        speed = button("1×", "Change pitch-preserving audio playback speed");
+        speed.setTag("telegram-speed");
+        speed.setOnClickListener(v -> showRates());
+        voiceBar.addView(speed, new LinearLayout.LayoutParams(-2, -2));
+        stopAudio = button("Stop audio", "Stop audio immediately");
+        stopAudio.setTag("telegram-stop-audio");
+        stopAudio.setOnClickListener(v -> emit("stopAudio"));
+        voiceBar.addView(stopAudio, new LinearLayout.LayoutParams(-2, -2));
+        shell.addView(voiceBar, new LinearLayout.LayoutParams(-1, -2));
+
+        compose = vertical();
+        compose.setTag("telegram-composer");
+        compose.setBackgroundColor(PANEL);
+        replyTop = new ChatActivityEnterTopView(context);
+        replyTop.setTag("telegram-enter-top");
+        reply = text(13, ACCENT, false);
+        reply.setPadding(dp(12), dp(7), dp(12), dp(7));
+        reply.setMaxLines(3);
+        reply.setEllipsize(TextUtils.TruncateAt.END);
+        replyTop.addReplyView(reply, new FrameLayout.LayoutParams(-1, -2));
+        replyTop.setContentDescription("Reply context. Tap to open message tools.");
+        replyTop.setOnClickListener(v -> emit("tools"));
+        compose.addView(replyTop, new LinearLayout.LayoutParams(-1, -2));
+
+        pending = text(12, SECONDARY, false);
+        pending.setTag("telegram-pending");
+        pending.setPadding(dp(12), dp(4), dp(12), dp(5));
+        pending.setMaxLines(3);
+        pending.setEllipsize(TextUtils.TruncateAt.END);
+        pending.setOnClickListener(v -> emit("tools"));
+        compose.addView(pending, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout editor = horizontal();
+        editor.setPadding(dp(4), dp(4), dp(4), dp(4));
+        compose.addView(editor, new LinearLayout.LayoutParams(-1, -2));
+        attach = button("＋", "Attach files");
+        attach.setTag("telegram-attach");
+        attach.setOnClickListener(v -> available("attachments", "attach", "Attachments are unavailable in this conversation."));
+        editor.addView(attach, new LinearLayout.LayoutParams(dp(42), -2));
+        input = new EditText(context);
+        input.setTag("telegram-draft");
+        input.setTextColor(TEXT);
+        input.setHintTextColor(SECONDARY);
+        input.setTextSize(16);
+        baseTextSizes.put(input, 16f);
+        input.setHint("Message");
+        input.setBackground(round(BACKGROUND, 20));
+        input.setPadding(dp(12), dp(8), dp(12), dp(8));
+        input.setMinLines(1);
+        input.setMaxLines(5);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        input.setImeOptions(EditorInfo.IME_FLAG_NO_EXTRACT_UI);
+        input.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+            @Override public void onTextChanged(CharSequence s, int start, int before, int count) {
+                if (!settingDraft) {
+                    submittedDraft = null;
+                    emit("draft", data("text", s.toString()));
+                }
+            }
+            @Override public void afterTextChanged(Editable value) { }
+        });
+        editor.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
+        microphone = button("Mic", "Record voice message");
+        microphone.setTag("telegram-mic");
+        microphone.setTextSize(12);
+        microphone.setOnClickListener(v -> available("voice", "record", "Recording is unavailable in this conversation."));
+        editor.addView(microphone, new LinearLayout.LayoutParams(dp(45), -2));
+        send = button("Send", "Send message; long press for Queue, Steer and Stop");
+        send.setTag("telegram-send");
+        send.setTextColor(ACCENT);
+        send.setOnClickListener(v -> sendMode("send"));
+        send.setOnLongClickListener(v -> {
+            showSendOptions();
+            return true;
+        });
+        editor.addView(send, new LinearLayout.LayoutParams(-2, -2));
+        shell.addView(compose, new LinearLayout.LayoutParams(-1, -2));
+
+        footer = horizontal();
+        footer.setTag("telegram-navigation");
+        footer.setBackgroundColor(PANEL);
+        for (int i = 0; i < VIEWS.length; i++) {
+            final String destination = VIEWS[i];
+            TextView tab = text(11, SECONDARY, true);
+            tab.setText(VIEW_LABELS[i]);
+            tab.setGravity(Gravity.CENTER);
+            tab.setPadding(dp(2), dp(10), dp(2), dp(10));
+            tab.setMinHeight(dp(48));
+            tab.setMaxLines(2);
+            tab.setTag("telegram-nav-" + destination);
+            tab.setContentDescription("Open " + VIEW_LABELS[i]);
+            tab.setOnClickListener(v -> emit("view", data("view", destination)));
+            navigation.add(tab);
+            footer.addView(tab, new LinearLayout.LayoutParams(0, -2, 1));
+        }
+        shell.addView(footer, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    /** Must be called on the UI thread by the existing native bridge. */
+    public void render(JSONObject value) {
+        if (value == null) return;
+        payload = value;
+        boolean nextVisible = value.optBoolean("visible", false);
+        visible = nextVisible;
+        setVisibility(nextVisible ? VISIBLE : GONE);
+        if (!nextVisible) return;
+
+        float nextScale = (float) Math.max(1, Math.min(1.5, value.optDouble("appScale", 1)));
+        if (appScale != nextScale) {
+            appScale = nextScale;
+            applyScale(shell);
+            rowsSignature = "";
+        }
+
+        boolean nextChat = value.optBoolean("chat");
+        String nextView = value.optString("view", "chats");
+        String nextIdentity = nextView + ":" + nextChat + ":" + value.optString("agent") + ":" + value.optString("sessionId");
+        boolean changedConversation = !nextIdentity.equals(identity);
+        if (changedConversation) {
+            identity = nextIdentity;
+            pinPosition = 0;
+            expanded.clear();
+            rowsSignature = "";
+            chromeSignature = "";
+            input.clearFocus();
+            submittedDraft = null;
+            lastFocusMessage = "";
+            listAtEnd = true;
+        }
+        chat = nextChat;
+        viewName = nextView;
+        updateChrome(changedConversation);
+        updateRows(changedConversation);
+        focusRequestedMessage();
+        updateJump();
+    }
+
+    public boolean showing() {
+        return visible && getVisibility() == VISIBLE;
+    }
+
+    public boolean back() {
+        if (!showing()) return false;
+        if (chat) {
+            emit("closeChat");
+            return true;
+        }
+        if (!"chats".equals(viewName)) {
+            emit("view", data("view", "chats"));
+            return true;
+        }
+        return false;
+    }
+
+    private void updateChrome(boolean changedConversation) {
+        JSONObject can = payload.optJSONObject("can");
+        String signature = payload.optString("name") + payload.optString("status") + payload.optBoolean("live")
+            + payload.optString("historyNote") + payload.optString("workSummary") + payload.optString("voiceStatus")
+            + payload.optDouble("playbackRate", 1) + payload.optString("replyLabel")
+            + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins"));
+        if (!signature.equals(chromeSignature)) {
+            chromeSignature = signature;
+            int color = color(payload.opt("color"), ACCENT);
+            title.setText(chat ? payload.optString("name", "Agent conversation")
+                : "activity".equals(viewName) ? "Live activity" : "DRACO Watch");
+            backButton.setVisibility(chat || !"chats".equals(viewName) ? VISIBLE : GONE);
+            runStop.setVisibility(chat ? VISIBLE : GONE);
+            runStop.setAlpha(capability("abort") ? 1 : .55f);
+            backDrawable.setRotation(0, false);
+            String state = payload.optString("status", "Status unavailable");
+            String live = payload.optBoolean("live") ? "Live" : "Not live · retained observations";
+            setText(subtitle, live + " · " + state);
+            subtitle.setTextColor(payload.optBoolean("live") ? SECONDARY : WARNING);
+            setOptional(work, payload.optString("workSummary"));
+            setOptional(history, payload.optString("historyNote"));
+            work.setContentDescription("Current work summary. Open work details.");
+            voiceBar.setVisibility(chat ? VISIBLE : GONE);
+            String voiceState = payload.optString("voiceStatus");
+            setText(voice, voiceState.isEmpty() ? "Voice status unavailable · text remains readable" : voiceState);
+            speed.setText(rateLabel(payload.optDouble("playbackRate", 1)));
+            setOptional(reply, payload.optString("replyLabel"));
+            replyTop.setVisibility(payload.optString("replyLabel").isEmpty() ? GONE : VISIBLE);
+            compose.setVisibility(chat ? VISIBLE : GONE);
+            send.setAlpha(capability("send") ? 1 : .55f);
+            attach.setAlpha(capability("attachments") ? 1 : .55f);
+            microphone.setAlpha(capability("voice") ? 1 : .55f);
+            input.setHint(capability("send") ? "Message" : "Draft · sending currently unavailable");
+            for (int i = 0; i < navigation.size(); i++) {
+                boolean selected = VIEWS[i].equals(viewName);
+                TextView tab = navigation.get(i);
+                tab.setTextColor(selected ? color : SECONDARY);
+                tab.setBackground(selected ? round(PANEL_LIGHT, 12) : null);
+                tab.setSelected(selected);
+            }
+            pinLine.setColor(color);
+            pinTitle.setTextColor(color);
+            renderPin();
+        }
+
+        String incomingDraft = payload.optString("draft");
+        // An unchanged remote snapshot must not reset composing text/selection.
+        boolean submittedCleared = submittedDraft != null && incomingDraft.isEmpty()
+            && input.getText().toString().equals(submittedDraft);
+        if ((changedConversation || !input.hasFocus() || submittedCleared) && !input.getText().toString().equals(incomingDraft)) {
+            settingDraft = true;
+            input.setText(incomingDraft);
+            input.setSelection(input.length());
+            settingDraft = false;
+            if (submittedCleared) submittedDraft = null;
+        }
+        updatePending();
+    }
+
+    private void updatePending() {
+        JSONArray attachments = payload.optJSONArray("attachments");
+        JSONArray outbox = payload.optJSONArray("outbox");
+        String signature = String.valueOf(attachments) + String.valueOf(outbox);
+        if (signature.equals(pendingSignature)) return;
+        pendingSignature = signature;
+        StringBuilder text = new StringBuilder();
+        if (attachments != null) for (int i = 0; i < attachments.length(); i++) {
+            JSONObject item = attachments.optJSONObject(i);
+            if (item == null) continue;
+            append(text, item.optString("name", "Attachment") + " · " + item.optString("state", "state unavailable"));
+        }
+        if (outbox != null) for (int i = 0; i < outbox.length(); i++) {
+            JSONObject item = outbox.optJSONObject(i);
+            if (item == null) continue;
+            String state = item.optString("state", "delivery unconfirmed");
+            append(text, "Outbox · " + state + (item.optString("note").isEmpty() ? "" : " · " + item.optString("note")));
+        }
+        setOptional(pending, text.toString());
+        pending.setContentDescription(text + ". Tap to open attachment and outbox controls.");
+    }
+
+    private void updateRows(boolean changedConversation) {
+        JSONArray content = payload.optJSONArray(chat ? "messages" : "activity".equals(viewName) ? "activity" : "roster");
+        JSONArray sessionWork = chat ? payload.optJSONArray("work") : null;
+        String signature = viewName + ":" + chat + ":" + appScale + ":" + String.valueOf(content) + String.valueOf(sessionWork);
+        if (signature.equals(rowsSignature)) return;
+        rowsSignature = signature;
+        int first = list.getFirstVisiblePosition();
+        View top = list.getChildAt(0);
+        int offset = top == null ? 0 : top.getTop();
+        String anchor = first < adapter.rows.size() ? adapter.rows.get(first).key : "";
+        boolean follow = changedConversation || listAtEnd;
+        ArrayList<Row> rows = new ArrayList<>();
+        if (content != null) for (int i = 0; i < content.length(); i++) {
+            JSONObject item = content.optJSONObject(i);
+            if (item == null) continue;
+            String type = chat ? "message" : "activity".equals(viewName) ? "activity" : "agent";
+            String id = item.optString("id", item.optString("messageId", "row-" + i));
+            rows.add(new Row("activity".equals(type) ? activityKey(item, id) : type + ":" + id, type, item));
+        }
+        if (sessionWork != null) for (int i = 0; i < sessionWork.length(); i++) {
+            JSONObject event = sessionWork.optJSONObject(i);
+            if (event == null) continue;
+            rows.add(new Row(activityKey(event, event.optString("id", "work-" + i)), "activity", event));
+        }
+        if (chat && sessionWork != null && sessionWork.length() > 0) {
+            Collections.sort(rows, Comparator.comparingLong(row -> orderTime(row.value.opt("timestamp"))));
+        }
+        if (rows.isEmpty()) {
+            String note = chat ? "No public messages loaded. History may be partial; this does not prove that no work occurred."
+                : "activity".equals(viewName) ? "No operational events loaded. Missing evidence is not an idle or completion receipt."
+                : "No agent observations loaded. Check pairing and connection in Settings.";
+            rows.add(new Row("empty", "empty", data("text", note)));
+        }
+        if (chat) rows.add(0, new Row("older", "older", new JSONObject()));
+        adapter.rows.clear();
+        adapter.rows.addAll(rows);
+        HashSet<String> presentRevisions = new HashSet<>();
+        for (Row row : rows) if ("activity".equals(row.type)) presentRevisions.add(expansionKey(row));
+        expanded.retainAll(presentRevisions);
+        adapter.notifyDataSetChanged();
+        if (chat && follow) list.post(this::jumpToLatest);
+        else if (!changedConversation && !anchor.isEmpty()) {
+            for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(anchor)) {
+                final int position = i;
+                list.post(() -> list.setSelectionFromTop(position, offset));
+                break;
+            }
+        } else if (changedConversation) list.setSelection(0);
+    }
+
+    private void renderPin() {
+        JSONArray pins = payload.optJSONArray("pins");
+        int count = pins == null ? 0 : pins.length();
+        pinBar.setVisibility(chat && count > 0 ? VISIBLE : GONE);
+        if (count == 0) return;
+        pinPosition = Math.max(0, Math.min(pinPosition, count - 1));
+        JSONObject pin = pins.optJSONObject(pinPosition);
+        if (pin == null) return;
+        pinLine.set(pinPosition, count, true);
+        pinTitle.setText("Pinned message" + (count > 1 ? " · " + (pinPosition + 1) + "/" + count : "")
+            + (pin.optBoolean("sourceAvailable", true) ? "" : " · Saved snapshot, not live"));
+        pinPreview.setText(pin.optString("title", pin.optString("text", "Pinned message unavailable in this history window")));
+    }
+
+    private JSONObject currentPin() {
+        JSONArray pins = payload.optJSONArray("pins");
+        return pins == null ? null : pins.optJSONObject(pinPosition);
+    }
+
+    private void openCurrentPin() {
+        JSONObject pin = currentPin();
+        if (pin == null) return;
+        navigatePin(pin);
+        JSONArray pins = payload.optJSONArray("pins");
+        if (pins != null && pins.length() > 1) {
+            pinPosition = (pinPosition + 1) % pins.length();
+            renderPin();
+        }
+    }
+
+    private void showPinOptions() {
+        final JSONObject origin = scope();
+        JSONObject pin = currentPin();
+        if (pin == null) {
+            showPinHistory();
+            return;
+        }
+        new AlertDialog.Builder(getContext()).setTitle("Pinned messages")
+            .setItems(new String[]{"Open this pin", "Next pin", "Pin history", "Unpin this message"}, (dialog, which) -> withScope(origin, () -> {
+                if (!sameScope(origin)) { toast("The conversation changed. Reopen pin controls in the intended chat."); return; }
+                if (which == 0) navigatePin(pin);
+                else if (which == 1) {
+                    JSONArray pins = payload.optJSONArray("pins");
+                    if (pins != null && pins.length() > 0) pinPosition = (pinPosition + 1) % pins.length();
+                    renderPin();
+                } else if (which == 2) showPinHistory();
+                else emit("unpin", data("id", pin.optString("messageId")));
+            })).show();
+    }
+
+    private void showPinHistory() {
+        final JSONObject origin = scope();
+        JSONArray events = payload.optJSONArray("pinHistory");
+        if (events == null || events.length() == 0) {
+            new AlertDialog.Builder(getContext()).setTitle("Pin history")
+                .setMessage("No pin changes are recorded for this conversation.")
+                .setPositiveButton("Close", null).show();
+            return;
+        }
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<JSONObject> records = new ArrayList<>();
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject item = events.optJSONObject(i);
+            if (item == null) continue;
+            records.add(item);
+            labels.add(item.optString("action", "Pin change") + " · " + item.optString("title", "Message")
+                + "\n" + time(item.opt("at")));
+        }
+        new AlertDialog.Builder(getContext()).setTitle("Pin history · this conversation")
+            .setItems(labels.toArray(new String[0]), (dialog, which) -> withScope(origin,
+                () -> gotoMessage(records.get(which).optString("messageId"))))
+            .setNegativeButton("Close", null).show();
+    }
+
+    private void navigatePin(JSONObject pin) {
+        if (pin.optBoolean("sourceAvailable", true)) gotoMessage(pin.optString("messageId"));
+        else showText("Saved pinned snapshot · not live", pin.optString("text", pin.optString("title", "Pinned message"))
+            + "\n\nThe original source is not available in the current history window. This retained snapshot is not a live observation.");
+    }
+
+    private void showOptions() {
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<Runnable> commands = new ArrayList<>();
+        option(labels, commands, "Search this history", this::showSearch);
+        if (chat) {
+            option(labels, commands, "Pinned message history", this::showPinHistory);
+            option(labels, commands, "Send / Queue / Steer / Stop", this::showSendOptions);
+            option(labels, commands, "Files, drafts and outbox", () -> emit("tools"));
+            option(labels, commands, "Commands", () -> emit("commands"));
+            option(labels, commands, "Older messages", () -> emit("older"));
+        }
+        option(labels, commands, "Operational evidence and coverage", () -> emit("details"));
+        option(labels, commands, "Audio speed", this::showRates);
+        option(labels, commands, "Stop audio", () -> emit("stopAudio"));
+        new AlertDialog.Builder(getContext()).setTitle(chat ? payload.optString("name", "Conversation") : "Watch options")
+            .setItems(labels.toArray(new String[0]), (dialog, which) -> commands.get(which).run()).show();
+    }
+
+    private void showSendOptions() {
+        final JSONObject origin = scope();
+        String steerLabel = capability("steer") ? "Steer this exact active run" : "Steer unavailable · not dispatched";
+        new AlertDialog.Builder(getContext()).setTitle("Run controls")
+            .setItems(new String[]{"Send new message", "Queue a follow-up", steerLabel,
+                capability("abort") ? "Stop the observed run" : "Stop unavailable for the observed run",
+                "Files, outbox and advanced tools", "Commands"}, (dialog, which) -> withScope(origin, () -> {
+                if (!sameScope(origin)) { toast("The conversation changed. No run control was dispatched."); return; }
+                if (which == 0) sendMode("send");
+                else if (which == 1) sendMode("queue");
+                else if (which == 2) sendMode("steer");
+                else if (which == 3) available("abort", "stop", "No supported Stop target is currently observed. Nothing was dispatched.");
+                else if (which == 4) emit("tools");
+                else emit("commands");
+            })).show();
+    }
+
+    private void sendMode(String mode) {
+        if (!capability(mode)) {
+            toast("steer".equals(mode) ? "Exact-run steering is unsupported. Nothing was queued or dispatched."
+                : "This action is unavailable in the current observed state. Your draft is retained.");
+            return;
+        }
+        submittedDraft = input.getText().toString();
+        emit("draft", data("text", submittedDraft));
+        emit("send", data("mode", mode));
+        // Only the authoritative returned draft/custody state can clear input.
+    }
+
+    private void showRates() {
+        final JSONObject origin = scope();
+        String[] labels = new String[RATES.length];
+        int selected = 2;
+        double current = payload.optDouble("playbackRate", 1);
+        for (int i = 0; i < RATES.length; i++) {
+            labels[i] = rateLabel(RATES[i]);
+            if (Math.abs(current - RATES[i]) < .001) selected = i;
+        }
+        new AlertDialog.Builder(getContext()).setTitle("Audio speed · pitch preserved")
+            .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                withScope(origin, () -> emit("speed", data("rate", RATES[which])));
+                dialog.dismiss();
+            }).setNegativeButton("Cancel", null).show();
+    }
+
+    private void showSearch() {
+        final JSONObject origin = scope();
+        EditText search = new EditText(getContext());
+        search.setSingleLine(true);
+        search.setHint("Search loaded public history");
+        search.setPadding(dp(20), dp(12), dp(20), dp(12));
+        new AlertDialog.Builder(getContext()).setTitle("Search")
+            .setView(search).setPositiveButton("Search", (dialog, which) -> withScope(origin,
+                () -> emit("search", data("text", search.getText().toString()))))
+            .setNegativeButton("Cancel", null).show();
+    }
+
+    private void messageOptions(JSONObject message) {
+        String id = message.optString("id");
+        if (id.isEmpty()) {
+            toast("This record has no actionable message identity.");
+            return;
+        }
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<Runnable> commands = new ArrayList<>();
+        option(labels, commands, "Formatted text and links", () -> emit("full", data("id", id)));
+        if (message.optBoolean("canReply")) {
+            option(labels, commands, "Reply", () -> emit("reply", data("id", id)));
+        }
+        if (message.optBoolean("canPin")) {
+            final boolean pinned = isPinned(id);
+            option(labels, commands, pinned ? "Unpin" : "Pin message", () -> emit(pinned ? "unpin" : "pin", data("id", id)));
+        }
+        if (!message.optString("text").isEmpty()) {
+            option(labels, commands, "Copy full text", () -> emit("copy", data("id", id)));
+            option(labels, commands, "Share full text", () -> emit("share", data("id", id)));
+        }
+        if (message.optBoolean("canRead")) {
+            option(labels, commands, "Read aloud in the agent's approved voice", () -> emit("read", data("id", id)));
+        }
+        JSONArray media = message.optJSONArray("media");
+        if (media != null) for (int i = 0; i < media.length(); i++) {
+            JSONObject item = media.optJSONObject(i);
+            if (item == null) continue;
+            final int index = item.optInt("index", i);
+            final boolean available = item.optBoolean("available");
+            final String unavailableReason = item.optString("unavailableReason", "No authenticated playable download is available for this attachment. Nothing was played.");
+            String label = item.optString("label", "Attachment");
+            option(labels, commands, available ? "Open " + label : label + " · unavailable", () -> {
+                if (available) emit("media", mediaData(id, index));
+                else toast(unavailableReason);
+            });
+        }
+        if (!message.optString("replyToId").isEmpty()) {
+            option(labels, commands, "Show linked readable message", () -> gotoMessage(message.optString("replyToId")));
+        }
+        if (labels.isEmpty()) {
+            toast("This record has no readable text or playable attachment. Delivery remains incomplete.");
+            return;
+        }
+        new AlertDialog.Builder(getContext()).setTitle("Message actions")
+            .setItems(labels.toArray(new String[0]), (dialog, which) -> commands.get(which).run()).show();
+    }
+
+    private boolean isPinned(String id) {
+        JSONArray pins = payload.optJSONArray("pins");
+        if (pins != null) for (int i = 0; i < pins.length(); i++) {
+            JSONObject pin = pins.optJSONObject(i);
+            if (pin != null && id.equals(pin.optString("messageId"))) return true;
+        }
+        return false;
+    }
+
+    private void gotoMessage(String id) {
+        if (id == null || id.isEmpty()) {
+            toast("The linked message identity is unavailable.");
+            return;
+        }
+        for (int i = 0; (actionScope == null || sameScope(actionScope)) && i < adapter.rows.size(); i++) {
+            Row row = adapter.rows.get(i);
+            if (id.equals(row.value.optString("id"))) {
+                list.smoothScrollToPositionFromTop(i, dp(12));
+                return;
+            }
+        }
+        emit("goto", data("id", id));
+    }
+
+    private void focusRequestedMessage() {
+        final String id = payload.optString("focusMessageId");
+        if (id.isEmpty()) {
+            lastFocusMessage = "";
+            return;
+        }
+        if (id.equals(lastFocusMessage)) return;
+        for (int i = 0; i < adapter.rows.size(); i++) {
+            if (id.equals(adapter.rows.get(i).value.optString("id"))) {
+                final int position = i;
+                final String expectedIdentity = identity;
+                lastFocusMessage = id;
+                list.post(() -> {
+                    if (identity.equals(expectedIdentity)) list.setSelectionFromTop(position, dp(12));
+                });
+                return;
+            }
+        }
+        // A later same-scope history update may supply the requested source.
+    }
+
+    private void jumpToLatest() {
+        if (adapter.rows.isEmpty()) return;
+        list.setSelection(adapter.rows.size() - 1);
+        listAtEnd = true;
+        updateJump();
+    }
+
+    private void updateJump() {
+        // ListView invokes its scroll listener immediately when registered,
+        // before the constructor has created the overlay control.
+        if (jump == null) return;
+        jump.setVisibility(showing() && (chat || "activity".equals(viewName)) && !listAtEnd ? VISIBLE : GONE);
+    }
+
+    private final class SurfaceAdapter extends BaseAdapter {
+        final ArrayList<Row> rows = new ArrayList<>();
+
+        @Override public int getCount() { return rows.size(); }
+        @Override public Object getItem(int position) { return rows.get(position); }
+        @Override public long getItemId(int position) { return stableId(rows.get(position).key); }
+        @Override public boolean hasStableIds() { return true; }
+        @Override public int getViewTypeCount() { return 5; }
+        @Override public int getItemViewType(int position) {
+            String type = rows.get(position).type;
+            return "message".equals(type) ? 0 : "activity".equals(type) ? 1 : "agent".equals(type) ? 2 : "older".equals(type) ? 3 : 4;
+        }
+
+        @Override public View getView(int position, View recycled, ViewGroup parent) {
+            Row row = rows.get(position);
+            String fingerprint = row.key + row.value.toString() + appScale + expanded.contains(expansionKey(row)) + isPinned(row.value.optString("id"));
+            if (recycled != null && fingerprint.equals(recycled.getTag())) return recycled;
+            View result;
+            if ("message".equals(row.type)) result = messageRow(row, position);
+            else if ("activity".equals(row.type)) result = activityRow(row);
+            else if ("agent".equals(row.type)) result = agentRow(row);
+            else if ("older".equals(row.type)) {
+                TextView older = text(13, ACCENT, true);
+                older.setText("Load older messages");
+                older.setGravity(Gravity.CENTER);
+                older.setPadding(dp(10), dp(10), dp(10), dp(10));
+                older.setOnClickListener(v -> emit("older"));
+                result = older;
+            } else {
+                TextView empty = text(15, SECONDARY, false);
+                empty.setText(row.value.optString("text"));
+                empty.setPadding(dp(20), dp(24), dp(20), dp(24));
+                result = empty;
+            }
+            result.setTag(fingerprint);
+            result.setTag(TAG_ROW_KEY, row.key);
+            return result;
+        }
+    }
+
+    private View agentRow(Row row) {
+        JSONObject agent = row.value;
+        LinearLayout outer = horizontal();
+        outer.setPadding(dp(10), dp(14), dp(8), dp(14));
+        TextView avatar = text(22, TEXT, true);
+        String name = agent.optString("name", agent.optString("id", "Agent"));
+        avatar.setText(name.isEmpty() ? "?" : name.substring(0, 1));
+        avatar.setGravity(Gravity.CENTER);
+        avatar.setBackground(round(color(agent.opt("color"), PANEL_LIGHT), 28));
+        outer.addView(avatar, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        LinearLayout content = vertical();
+        content.setPadding(dp(13), 0, 0, 0);
+        TextView nameView = text(17, TEXT, true);
+        nameView.setText(name);
+        TextView state = text(12, ACCENT, false);
+        state.setText(agent.optString("status", "Status unavailable"));
+        TextView preview = text(14, SECONDARY, false);
+        preview.setText(agent.optString("preview", "No public report available"));
+        preview.setMaxLines(3);
+        preview.setEllipsize(TextUtils.TruncateAt.END);
+        content.addView(nameView);
+        content.addView(state);
+        content.addView(preview);
+        outer.addView(content, new LinearLayout.LayoutParams(0, -2, 1));
+        outer.setContentDescription(name + ". " + state.getText() + ". " + preview.getText());
+        outer.setOnClickListener(v -> emit("openChat", data("agent", agent.optString("id"))));
+        return outer;
+    }
+
+    private View messageRow(Row row, int position) {
+        JSONObject message = row.value;
+        boolean outgoing = "user".equals(message.optString("role"));
+        LinearLayout outer = vertical();
+        outer.setGravity(outgoing ? Gravity.END : Gravity.START);
+        outer.setPadding(outgoing ? dp(24) : dp(2), dp(3), outgoing ? dp(2) : dp(24), dp(3));
+        LinearLayout bubble = vertical();
+        bubble.setPadding(dp(13), dp(9), dp(13), dp(8));
+        MessageDrawable background = new MessageDrawable(getContext(), outgoing, outgoing ? OUTGOING : INCOMING);
+        background.setAdjacent(adjacentMessage(position, -1, outgoing), adjacentMessage(position, 1, outgoing));
+        bubble.setBackground(background);
+        outer.addView(bubble, new LinearLayout.LayoutParams(-2, -2));
+
+        String kind = message.optString("kind");
+        String role = outgoing ? "You" : payload.optString("name", "Agent");
+        if (isPinned(message.optString("id"))) role += " · Pinned";
+        if (!kind.isEmpty()) role += " · " + kind;
+        TextView author = text(11, ACCENT, true);
+        author.setText(role);
+        bubble.addView(author);
+
+        String fullText = message.optString("text");
+        TextView content = text(16, TEXT, false);
+        content.setText(fullText.isEmpty() ? "Readable report text unavailable. An attachment does not prove a companion text reply." : fullText);
+        content.setTextColor(fullText.isEmpty() ? WARNING : TEXT);
+        content.setTextIsSelectable(true);
+        content.setPadding(0, dp(4), 0, dp(5));
+        content.setOnLongClickListener(v -> {
+            messageOptions(message);
+            return true;
+        });
+        bubble.addView(content);
+        if (message.optBoolean("truncated") || message.optBoolean("fullAvailable")) {
+            TextView limited = text(12, WARNING, false);
+            limited.setText("Native preview is bounded; open the full exact message below.");
+            bubble.addView(limited);
+            Button full = button("Show full message", "Open complete readable text for this exact message");
+            full.setTag("telegram-full-" + message.optString("id"));
+            full.setOnClickListener(v -> emit("full", data("id", message.optString("id"))));
+            bubble.addView(full);
+        }
+
+        JSONArray media = message.optJSONArray("media");
+        if (media != null) for (int i = 0; i < media.length(); i++) {
+            JSONObject item = media.optJSONObject(i);
+            if (item == null) continue;
+            final int index = item.optInt("index", i);
+            final boolean available = item.optBoolean("available");
+            final String unavailableReason = item.optString("unavailableReason", "No authenticated playable download is available. This is not a working audio control.");
+            Button mediaButton = button(item.optString("label", "Attachment") + (available ? " · Open" : " · Unavailable"),
+                available ? "Open authenticated attachment" : "Attachment has no usable authenticated download");
+            mediaButton.setTextColor(available ? ACCENT : WARNING);
+            mediaButton.setTag("telegram-media-" + message.optString("id") + "-" + index);
+            mediaButton.setOnClickListener(v -> {
+                if (available) emit("media", mediaData(message.optString("id"), index));
+                else toast(unavailableReason);
+            });
+            bubble.addView(mediaButton, new LinearLayout.LayoutParams(-1, -2));
+        }
+        String replyTo = message.optString("replyToId");
+        if (!replyTo.isEmpty()) {
+            Button linked = button("Show linked text", "Navigate to independently readable linked message");
+            linked.setOnClickListener(v -> gotoMessage(replyTo));
+            bubble.addView(linked);
+        }
+        if (message.optBoolean("canRead")) {
+            Button read = button("Read aloud", "Deliberately read this exact public message in its agent's approved voice");
+            read.setTag("telegram-read-" + message.optString("id"));
+            read.setOnClickListener(v -> emit("read", data("id", message.optString("id"))));
+            bubble.addView(read);
+        }
+        String delivery = delivery(message.opt("delivery"));
+        if (!delivery.isEmpty()) {
+            TextView receipt = text(11, SECONDARY, false);
+            receipt.setText(delivery);
+            receipt.setTextIsSelectable(true);
+            bubble.addView(receipt);
+        }
+        LinearLayout meta = horizontal();
+        TextView stamp = text(11, SECONDARY, false);
+        stamp.setText(time(message.opt("timestamp")));
+        meta.addView(stamp, new LinearLayout.LayoutParams(0, -2, 1));
+        Button menu = button("⋮", "Reply, pin, copy and media actions");
+        menu.setTag("telegram-message-actions-" + message.optString("id"));
+        menu.setOnClickListener(v -> messageOptions(message));
+        meta.addView(menu, new LinearLayout.LayoutParams(dp(40), -2));
+        bubble.addView(meta);
+        outer.setOnLongClickListener(v -> {
+            messageOptions(message);
+            return true;
+        });
+        return outer;
+    }
+
+    private boolean adjacentMessage(int position, int direction, boolean outgoing) {
+        int other = position + direction;
+        if (other < 0 || other >= adapter.rows.size()) return false;
+        Row row = adapter.rows.get(other);
+        return "message".equals(row.type) && outgoing == "user".equals(row.value.optString("role"));
+    }
+
+    private View activityRow(Row row) {
+        JSONObject event = row.value;
+        LinearLayout outer = vertical();
+        outer.setPadding(dp(7), dp(5), dp(7), dp(5));
+        LinearLayout card = vertical();
+        card.setBackground(round(PANEL, 12));
+        card.setPadding(dp(12), dp(10), dp(12), dp(10));
+        outer.addView(card, new LinearLayout.LayoutParams(-1, -2));
+        TextView heading = text(13, ACCENT, true);
+        heading.setText(event.optString("name", event.optString("agent", "Agent")) + " · "
+            + event.optString("kind", "Operational observation") + " · " + time(event.opt("timestamp")));
+        card.addView(heading);
+        TextView summary = text(15, TEXT, false);
+        summary.setText(event.optString("text", "Summary unavailable; no outcome inferred."));
+        summary.setTextIsSelectable(true);
+        summary.setPadding(0, dp(5), 0, dp(5));
+        card.addView(summary);
+        String details = detail(event.opt("detail"));
+        String revision = event.optString("revision");
+        String expansionKey = expansionKey(row);
+        if (!details.isEmpty()) {
+            Button toggle = button(expanded.contains(expansionKey) ? "Hide evidence" : "Expand evidence", "Expand this same-revision operational observation");
+            toggle.setTag("telegram-expand-" + event.optString("id"));
+            toggle.setOnClickListener(v -> {
+                if (expanded.contains(expansionKey)) expanded.remove(expansionKey);
+                else expanded.add(expansionKey);
+                adapter.notifyDataSetChanged();
+            });
+            card.addView(toggle);
+            if (expanded.contains(expansionKey)) {
+                TextView evidence = text(13, SECONDARY, false);
+                evidence.setText(details + (revision.isEmpty() ? "\nRevision unavailable" : "\nObservation revision: " + revision));
+                evidence.setTextIsSelectable(true);
+                evidence.setTag("telegram-evidence-" + event.optString("id"));
+                card.addView(evidence);
+            }
+        }
+        if (!chat && !event.optString("agent").isEmpty()) {
+            Button open = button("Open agent chat", "Open this event's agent conversation before using chat-scoped controls");
+            open.setOnClickListener(v -> emit("openChat", data("agent", event.optString("agent"))));
+            card.addView(open);
+        }
+        if (chat && event.optBoolean("canPin")
+            && payload.optString("agent").equals(event.optString("agent"))
+            && payload.optString("sessionId").equals(event.optString("sessionId"))) {
+            final JSONObject origin = scope();
+            final String expectedRevision = expansionKey(row);
+            Button pin = button(isPinned(event.optString("id")) ? "Unpin activity" : "Pin activity", "Pin this exact owned operational observation");
+            pin.setTag("telegram-pin-work-" + event.optString("id"));
+            pin.setOnClickListener(v -> {
+                if (!sameScope(origin) || !currentWorkRevision(row.key, expectedRevision)) {
+                    toast("This operational observation changed or became unavailable. Reopen its current revision before pinning.");
+                    return;
+                }
+                JSONObject data = data("id", event.optString("id"));
+                try { data.put("revision", event.optString("revision")); } catch (JSONException ignored) { }
+                withScope(origin, () -> emit(isPinned(event.optString("id")) ? "unpin" : "pin", data));
+            });
+            card.addView(pin);
+        }
+        return outer;
+    }
+
+    private boolean currentWorkRevision(String key, String expectedRevision) {
+        JSONArray events = payload.optJSONArray("work");
+        if (events == null) return false;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null || !event.optBoolean("canPin")) continue;
+            String currentKey = activityKey(event, event.optString("id", "work-" + i));
+            if (key.equals(currentKey) && expectedRevision.equals(expansionKey(new Row(currentKey, "activity", event)))) return true;
+        }
+        return false;
+    }
+
+    private static final class Row {
+        final String key;
+        final String type;
+        final JSONObject value;
+        Row(String key, String type, JSONObject value) {
+            this.key = key;
+            this.type = type;
+            this.value = value;
+        }
+    }
+
+    private static String expansionKey(Row row) {
+        String revision = row.value.optString("revision");
+        return row.key + ":revision:" + (revision.isEmpty() ? "unavailable:" + stableId(row.value.toString()) : revision);
+    }
+
+    private static String activityKey(JSONObject event, String id) {
+        // Native record/call IDs are not globally unique across agents or
+        // physical sessions. Escaped tuple fields also prevent separator aliases.
+        return "activity:" + JSONObject.quote(event.optString("agent")) + ":"
+            + JSONObject.quote(event.optString("sessionId")) + ":" + JSONObject.quote(id);
+    }
+
+    private boolean capability(String name) {
+        JSONObject can = payload.optJSONObject("can");
+        return can != null && can.optBoolean(name, false);
+    }
+
+    private void available(String capability, String action, String refusal) {
+        if (capability(capability)) emit(action);
+        else toast(refusal);
+    }
+
+    private void emit(String action) {
+        emit(action, new JSONObject());
+    }
+
+    private void emit(String action, JSONObject data) {
+        if (actions == null) {
+            toast("The native Watch action bridge is unavailable. Nothing was dispatched.");
+            return;
+        }
+        JSONObject origin = actionScope == null ? scope() : actionScope;
+        try {
+            if ("openChat".equals(action)) data.put("sourceAgent", origin.optString("agent"));
+            else data.put("agent", origin.optString("agent"));
+            data.put("sessionId", origin.optString("sessionId"));
+            if ("stop".equals(action) || "send".equals(action) && "steer".equals(data.optString("mode"))) {
+                data.put("runId", origin.optString("runId"));
+            }
+        } catch (JSONException ignored) { }
+        actions.send(action, data);
+    }
+
+    private void showText(String heading, String value) {
+        TextView content = text(15, TEXT, false);
+        content.setText(value);
+        content.setTextIsSelectable(true);
+        content.setPadding(dp(20), dp(16), dp(20), dp(16));
+        android.widget.ScrollView scroll = new android.widget.ScrollView(getContext());
+        scroll.addView(content);
+        new AlertDialog.Builder(getContext()).setTitle(heading).setView(scroll).setPositiveButton("Close", null).show();
+    }
+
+    private void toast(String value) {
+        Toast.makeText(getContext(), value, Toast.LENGTH_LONG).show();
+    }
+
+    private void option(List<String> labels, List<Runnable> commands, String label, Runnable command) {
+        labels.add(label);
+        final JSONObject origin = scope();
+        commands.add(() -> {
+            if (!sameScope(origin)) {
+                toast("The conversation changed. Reopen controls in the intended chat. Nothing was dispatched.");
+                return;
+            }
+            withScope(origin, command);
+        });
+    }
+
+    private TextView text(float size, int color, boolean bold) {
+        TextView result = new TextView(getContext());
+        result.setTextColor(color);
+        result.setTextSize(size);
+        baseTextSizes.put(result, size);
+        result.setTextSize(size * appScale);
+        result.setIncludeFontPadding(true);
+        result.setLineSpacing(dp(1), 1);
+        if (bold) result.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        return result;
+    }
+
+    private Button button(String label, String description) {
+        Button result = new Button(getContext());
+        result.setText(label);
+        result.setContentDescription(description);
+        result.setTextSize(13);
+        baseTextSizes.put(result, 13f);
+        result.setTextSize(13 * appScale);
+        result.setTextColor(SECONDARY);
+        result.setAllCaps(false);
+        result.setMinWidth(0);
+        result.setMinimumWidth(0);
+        result.setMinHeight(dp(40));
+        result.setMinimumHeight(dp(40));
+        result.setPadding(dp(9), dp(5), dp(9), dp(5));
+        result.setBackground(round(Color.TRANSPARENT, 14));
+        return result;
+    }
+
+    private LinearLayout vertical() {
+        LinearLayout result = new LinearLayout(getContext());
+        result.setOrientation(LinearLayout.VERTICAL);
+        return result;
+    }
+
+    private LinearLayout horizontal() {
+        LinearLayout result = new LinearLayout(getContext());
+        result.setOrientation(LinearLayout.HORIZONTAL);
+        result.setGravity(Gravity.CENTER_VERTICAL);
+        return result;
+    }
+
+    private GradientDrawable round(int color, float radius) {
+        GradientDrawable result = new GradientDrawable();
+        result.setColor(color);
+        result.setCornerRadius(dp(radius));
+        return result;
+    }
+
+    private int dp(float value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private JSONObject scope() {
+        JSONObject result = data("agent", payload.optString("agent"));
+        try {
+            result.put("sessionId", payload.optString("sessionId"));
+            result.put("runId", payload.optString("controlRunId"));
+        } catch (JSONException ignored) { }
+        return result;
+    }
+
+    private boolean sameScope(JSONObject origin) {
+        return origin.optString("agent").equals(payload.optString("agent"))
+            && origin.optString("sessionId").equals(payload.optString("sessionId"));
+    }
+
+    private void withScope(JSONObject origin, Runnable callback) {
+        JSONObject previous = actionScope;
+        actionScope = origin;
+        try { callback.run(); } finally { actionScope = previous; }
+    }
+
+    private void applyScale(View target) {
+        if (target instanceof TextView) {
+            Float base = baseTextSizes.get((TextView) target);
+            if (base != null) ((TextView) target).setTextSize(base * appScale);
+        }
+        if (target instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) target;
+            for (int i = 0; i < group.getChildCount(); i++) applyScale(group.getChildAt(i));
+        }
+    }
+
+    private void setOptional(TextView target, String value) {
+        target.setVisibility(value == null || value.isEmpty() ? GONE : VISIBLE);
+        setText(target, value == null ? "" : value);
+    }
+
+    private void setText(TextView target, String value) {
+        if (!target.getText().toString().equals(value)) target.setText(value);
+    }
+
+    private static JSONObject data(String key, Object value) {
+        JSONObject result = new JSONObject();
+        try { result.put(key, value); } catch (JSONException ignored) { }
+        return result;
+    }
+
+    private static JSONObject mediaData(String id, int index) {
+        JSONObject result = data("id", id);
+        try { result.put("index", index); } catch (JSONException ignored) { }
+        return result;
+    }
+
+    private static void append(StringBuilder builder, String line) {
+        if (builder.length() > 0) builder.append('\n');
+        builder.append(line);
+    }
+
+    private static String rateLabel(double rate) {
+        return (Math.rint(rate) == rate ? Integer.toString((int) rate) : Double.toString(rate)) + "×";
+    }
+
+    private static int color(Object value, int fallback) {
+        if (value instanceof Number) return ((Number) value).intValue();
+        if (value instanceof String) try { return Color.parseColor((String) value); } catch (IllegalArgumentException ignored) { }
+        return fallback;
+    }
+
+    private static String time(Object value) {
+        if (value == null || value == JSONObject.NULL) return "Time unavailable";
+        if (value instanceof Number) {
+            long millis = ((Number) value).longValue();
+            if (millis < 100000000000L) millis *= 1000;
+            return DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(new Date(millis));
+        }
+        String text = String.valueOf(value);
+        if (text.matches("[0-9]{10,16}")) try { return time(Long.parseLong(text)); } catch (NumberFormatException ignored) { }
+        return text;
+    }
+
+    private static long orderTime(Object value) {
+        if (value instanceof Number) {
+            long millis = ((Number) value).longValue();
+            return millis < 100000000000L ? millis * 1000 : millis;
+        }
+        if (value instanceof String) {
+            try { return orderTime(Long.parseLong((String) value)); } catch (NumberFormatException ignored) { }
+            String[] formats = {"yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX"};
+            for (String format : formats) try {
+                Date date = new java.text.SimpleDateFormat(format, Locale.ROOT).parse((String) value);
+                if (date != null) return date.getTime();
+            } catch (java.text.ParseException ignored) { }
+        }
+        return 0;
+    }
+
+    private static long stableId(String key) {
+        long hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < key.length(); i++) hash = (hash ^ key.charAt(i)) * 0x100000001b3L;
+        return hash;
+    }
+
+    private static String delivery(Object value) {
+        if (value instanceof String) return (String) value;
+        if (!(value instanceof JSONObject)) return "Delivery legs unconfirmed · handset use unverified";
+        JSONObject item = (JSONObject) value;
+        String text = leg(item.opt("text"));
+        String voice = leg(item.opt("voice"));
+        return "Text: " + text + " · Voice: " + voice + " · Handset use: "
+            + item.optString("deviceAcceptance", "unverified");
+    }
+
+    private static String leg(Object value) {
+        if (value instanceof String) return (String) value;
+        if (value instanceof JSONObject) return ((JSONObject) value).optString("status", "unconfirmed");
+        return "unconfirmed";
+    }
+
+    /** Details are already safely projected by Watch; never stringify arbitrary tool payloads. */
+    private static String detail(Object value) {
+        if (value instanceof String) return (String) value;
+        if (!(value instanceof JSONObject)) return "";
+        JSONObject detail = (JSONObject) value;
+        StringBuilder result = new StringBuilder();
+        String[] fields = {"tool", "toolName", "operation", "effect", "result", "outcome", "agent", "sessionId", "runId", "callId", "lifecycle", "coverage", "freshness", "gap", "warning"};
+        for (String key : fields) {
+            Object item = detail.opt(key);
+            if (item instanceof String || item instanceof Number || item instanceof Boolean) append(result, key + ": " + item);
+        }
+        return result.toString();
+    }
+}

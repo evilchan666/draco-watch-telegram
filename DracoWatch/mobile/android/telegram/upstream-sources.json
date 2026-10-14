@@ -1,0 +1,28 @@
+{
+  "fork": "https://github.com/evilchan666/draco-watch-telegram",
+  "upstream": "https://github.com/DrKLO/Telegram",
+  "commit": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
+  "license": "GPL-2.0-or-later",
+  "files": {
+    "Components/ChatActivityEnterTopView.java": {
+      "sha256": "edb0933debaf6fc5d3531bdf9a59d5ac69d9d031f579971c2a5df8ed6283bcc3",
+      "source": "TMessagesProj/src/main/java/org/telegram/ui/Components/ChatActivityEnterTopView.java"
+    },
+    "Components/PinnedLineView.java": {
+      "sha256": "093056864536429ab6cf072a1de7f785de2db025215e0a0c19ae22fffaa2a144",
+      "source": "TMessagesProj/src/main/java/org/telegram/ui/Components/PinnedLineView.java"
+    },
+    "ActionBar/BackDrawable.java": {
+      "sha256": "c8aae99ed4b7e34296dc1e75db32d1e15ef6db6d34ec323444ee7ca930277d88",
+      "source": "TMessagesProj/src/main/java/org/telegram/ui/ActionBar/BackDrawable.java"
+    },
+    "ActionBar/MessageDrawable.java": {
+      "sha256": "52a96c6ab720229d560bf408ff1ddd2e19c183f024537a23ead63a4d216946e6",
+      "source": "TMessagesProj/src/main/java/org/telegram/ui/ActionBar/MessageDrawable.java"
+    },
+    "Components/CubicBezierInterpolator.java": {
+      "sha256": "747f7b8f511249f14bc1b567088d7e0da3639729263a6f56243eb61c2ba19387",
+      "source": "TMessagesProj/src/main/java/org/telegram/ui/Components/CubicBezierInterpolator.java"
+    }
+  }
+}

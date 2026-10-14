@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.omega.dracowatch.checks">
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
+    <instrumentation android:name="org.omega.dracowatch.NativeChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.AudioPolicyChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.WorkStreamChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.MediaLinkChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.AcceptedAudioChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.ViewportEvidenceChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.TelegramSurfaceChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <instrumentation android:name="org.omega.dracowatch.TelegramBridgeChecks" android:targetPackage="org.omega.dracowatch" android:functionalTest="true" />
+    <application android:label="DRACO isolated native checks" android:allowBackup="false"><activity android:name="org.omega.dracowatch.CompetingAudioActivity" android:exported="true" /><service android:name="org.omega.dracowatch.CompetingAudioService" android:exported="true" /></application>
+</manifest>
