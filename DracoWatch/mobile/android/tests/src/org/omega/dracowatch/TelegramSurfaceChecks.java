@@ -53,6 +53,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         checks++; android.util.Log.i("DracoTelegramCheck", "PASS " + name);
     }
     private static String repeat(String value, int count) { StringBuilder out = new StringBuilder(); for (int i=0;i<count;i++)out.append(value);return out.toString(); }
+    private boolean flag(String key) { Object value=arguments.get(key);return value instanceof Boolean?(Boolean)value:Boolean.parseBoolean(String.valueOf(value)); }
     private Field activityField(String name) throws Exception { Field f=activity.getClass().getDeclaredField(name);f.setAccessible(true);return f; }
     private List<View> descendants(View root) {
         List<View> result = new ArrayList<>(); result.add(root);
@@ -112,7 +113,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         }
         ListView list=timeline();check(ui(()->list.getHeight())>70,label+" retains usable scrollable message space");
         float configured=activity.getResources().getConfiguration().fontScale;
-        if(arguments.getBoolean("requireFont150",false))check(configured>=1.49f,"Android native system font is actually enlarged to 150 percent");
+        if(flag("requireFont150"))check(configured>=1.49f,"Android native system font is actually enlarged to 150 percent");
     }
     @Override public void onStart() {
         Bundle result=new Bundle();

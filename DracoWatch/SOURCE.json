@@ -1,5 +1,5 @@
 {
-  "watchSource": "4c4218acd25e2a33c896850e1e59bc510139a3b3",
+  "watchSource": "babbfff69edb7096418ed2b29ea2bc94974d0261",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,

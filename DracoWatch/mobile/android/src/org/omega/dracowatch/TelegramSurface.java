@@ -121,6 +121,7 @@ public final class TelegramSurface extends FrameLayout {
     private int pinPosition;
     private String pendingSignature = "";
     private float appScale = 1f;
+    private float nativeFontScale;
     private JSONObject actionScope;
     private String submittedDraft;
     private String lastFocusMessage = "";
@@ -128,6 +129,7 @@ public final class TelegramSurface extends FrameLayout {
     public TelegramSurface(Context context, Actions actions) {
         super(context);
         this.actions = actions;
+        nativeFontScale = getResources().getConfiguration().fontScale;
         setTag("telegram-surface");
         setBackgroundColor(BACKGROUND);
         setVisibility(GONE);
@@ -371,10 +373,13 @@ public final class TelegramSurface extends FrameLayout {
         if (!nextVisible) return;
 
         float nextScale = (float) Math.max(1, Math.min(1.5, value.optDouble("appScale", 1)));
-        if (appScale != nextScale) {
+        float nextNativeFontScale = getResources().getConfiguration().fontScale;
+        if (appScale != nextScale || nativeFontScale != nextNativeFontScale) {
             appScale = nextScale;
+            nativeFontScale = nextNativeFontScale;
             applyScale(shell);
             rowsSignature = "";
+            chromeSignature = "";
         }
 
         boolean nextChat = value.optBoolean("chat");
@@ -501,7 +506,7 @@ public final class TelegramSurface extends FrameLayout {
     private void updateRows(boolean changedConversation) {
         JSONArray content = payload.optJSONArray(chat ? "messages" : "activity".equals(viewName) ? "activity" : "roster");
         JSONArray sessionWork = chat ? payload.optJSONArray("work") : null;
-        String signature = viewName + ":" + chat + ":" + appScale + ":" + String.valueOf(content) + String.valueOf(sessionWork);
+        String signature = viewName + ":" + chat + ":" + appScale + ":" + nativeFontScale + ":" + String.valueOf(content) + String.valueOf(sessionWork);
         if (signature.equals(rowsSignature)) return;
         rowsSignature = signature;
         int first = list.getFirstVisiblePosition();
@@ -824,7 +829,7 @@ public final class TelegramSurface extends FrameLayout {
 
         @Override public View getView(int position, View recycled, ViewGroup parent) {
             Row row = rows.get(position);
-            String fingerprint = row.key + row.value.toString() + appScale + expanded.contains(expansionKey(row)) + isPinned(row.value.optString("id"));
+            String fingerprint = row.key + row.value.toString() + appScale + ":" + nativeFontScale + expanded.contains(expansionKey(row)) + isPinned(row.value.optString("id"));
             if (recycled != null && fingerprint.equals(recycled.getTag())) return recycled;
             View result;
             if ("message".equals(row.type)) result = messageRow(row, position);

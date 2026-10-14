@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.webkit.WebView;
 import android.widget.EditText;
@@ -74,6 +75,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
     private void check(boolean value, String label) {
         if (!value) throw new AssertionError(label); checks++; android.util.Log.i("DracoTelegramBridge", "PASS " + label);
     }
+    private boolean flag(String key) { Object value = arguments.get(key); return value instanceof Boolean ? (Boolean) value : Boolean.parseBoolean(String.valueOf(value)); }
     private void jsCheck(String expression, String label) throws Exception { check("true".equals(js(expression)), label); }
     private View tag(String value) throws Exception { return ui(() -> surface.findViewWithTag(value)); }
     private View requireTag(String value) throws Exception { View v = tag(value); if (v == null) throw new AssertionError("Missing actual native view " + value); return v; }
@@ -104,7 +106,26 @@ public final class TelegramBridgeChecks extends Instrumentation {
         for (int i = 0; i < 40 && n == null; i++) { n = exactNode(label); if (n == null) SystemClock.sleep(80); }
         if (n == null) throw new AssertionError("Native dialog choice missing: " + label);
         for (int i = 0; i < 5 && !n.isClickable() && n.getParent() != null; i++) n = n.getParent();
-        check(n.performAction(AccessibilityNodeInfo.ACTION_CLICK), "native dialog choice: " + label); waitForIdleSync();
+        boolean clicked = n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        if (!clicked) {
+            // Some Android ListView dialog rows advertise no clickable action
+            // through their text node/parent despite occupying a touch target.
+            // Inject a genuine screen tap, never call the app callback directly.
+            AccessibilityNodeInfo fresh = exactNode(label);
+            if (fresh != null) n = fresh;
+            n.refresh(); Rect bounds = new Rect(); n.getBoundsInScreen(bounds);
+            if (bounds.isEmpty() || !n.isVisibleToUser()) throw new AssertionError("Native dialog target is not visible: " + label);
+            long at = SystemClock.uptimeMillis();
+            MotionEvent down = MotionEvent.obtain(at, at, MotionEvent.ACTION_DOWN, bounds.exactCenterX(), bounds.exactCenterY(), 0);
+            MotionEvent up = MotionEvent.obtain(at, at + 80, MotionEvent.ACTION_UP, bounds.exactCenterX(), bounds.exactCenterY(), 0);
+            try {
+                boolean downAccepted = getUiAutomation().injectInputEvent(down, true);
+                boolean upAccepted = getUiAutomation().injectInputEvent(up, true);
+                clicked = downAccepted && upAccepted;
+            }
+            finally { down.recycle(); up.recycle(); }
+        }
+        check(clicked, "native dialog choice: " + label); waitForIdleSync();
     }
     private void installTestBoundary() throws Exception {
         // Preserve the genuine Java bridge render call. No network/input/media
@@ -126,7 +147,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
         check(field("profile").get(activity) == null, label + " remains unpaired with no production credentials");
     }
     private void screenshot(String name) throws Exception {
-        if (!arguments.getBoolean("screenshots", false)) return;
+        if (!flag("screenshots")) return;
         waitForIdleSync(); SystemClock.sleep(150); Bitmap shot = getUiAutomation().takeScreenshot();
         if (shot == null) throw new AssertionError("Screenshot unavailable");
         File dir = new File(getTargetContext().getExternalFilesDir(null), "telegram-bridge-checks"); if (!dir.exists() && !dir.mkdirs()) throw new AssertionError("Screenshot directory unavailable");
@@ -140,7 +161,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
             View v = requireTag(key); Rect r = ui(() -> { Rect measured = new Rect(); v.getGlobalVisibleRect(measured); return measured; });
             check(r.width() > 0 && r.height() > 0 && r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1, "integrated " + key + " fits within actual viewport");
         }
-        if (arguments.getBoolean("requireFont150", false)) check(activity.getResources().getConfiguration().fontScale >= 1.49f, "actual native Android font is 150 percent");
+        if (flag("requireFont150")) check(activity.getResources().getConfiguration().fontScale >= 1.49f, "actual native Android font is 150 percent");
     }
     @Override public void onStart() {
         Bundle result = new Bundle();
