@@ -4,6 +4,56 @@
 (() => {
   const KEY = 'draco-watch-client-v2';
   const AGENTS = ['main','forge','atlas','aera-new','vvv','daedalus'];
+  const occupancyLabel = status => ({active:'Run open',idle:'No open run',queued:'Queued admission',unknown:'Runtime unknown'})[status] || 'Runtime unknown';
+  const conversationKey = agent => `agent:${agent}:telegram:direct:8745908879`;
+  const statusId = value => typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,256}$/.test(value);
+  function conversationTarget(agent) {
+    if (!agent || !AGENTS.includes(agent.id) || agent.sessionKey !== conversationKey(agent.id) || !statusId(agent.sessionId)) return null;
+    const targets=(agent.controlTargets || []).filter(target => target?.agent === agent.id && target.scope === 'conversation' &&
+      target.sessionKey === agent.sessionKey && target.sessionId === agent.sessionId && statusId(target.runId));
+    const runs=new Set(targets.map(target=>target.runId));
+    return runs.size === 1 ? targets[0] : null;
+  }
+  // Occupancy and observed events are independent. No approval/input wait,
+  // current process liveness or useful work is inferred from silence/history.
+  function runObservation(agent,{live=false,now=Date.now(),events=[],coverage}={}) {
+    const bound=live && agent && AGENTS.includes(agent.id) && agent.sessionKey === conversationKey(agent.id) && statusId(agent.sessionId);
+    const status=bound ? agent.conversationStatus : 'unknown';
+    const conversation=({active:'Conversation run open',idle:'No conversation run',queued:'Conversation queued',unknown:'Conversation state unknown'})[status] || 'Conversation state unknown';
+    const base={occupancy:live ? occupancyLabel(agent?.status) : 'Runtime unknown · stale/disconnected',conversation,
+      execution:'Execution unknown',summary:'No exact-run execution evidence observed',event:null,target:null};
+    if (!live) return {...base,summary:'Observation stale or disconnected; received history is retained'};
+    if (status === 'idle') return {...base,summary:'No open run in this conversation; agent-wide occupancy is separate'};
+    const target=status === 'active' ? conversationTarget(agent) : null;
+    if (!target) return {...base,summary:status === 'queued' ? 'Admission is not execution or waiting evidence' : 'Exact conversation run unavailable; execution unknown'};
+    base.target=target;
+    if (!coverage || coverage.available !== true || !Number.isFinite(coverage.freshUntil) || coverage.freshUntil <= now)
+      return {...base,summary:'Execution evidence unavailable or stale; runtime occupancy remains separate'};
+    const matches=events.filter(event => {
+      const o=event?.observation,s=event?.evidenceSource;
+      return event?.publicAttested === true && event.source === 'authenticated-tool-status' && event.agent === agent.id &&
+        event.sessionKey === agent.sessionKey && event.sessionId === agent.sessionId && event.runId === target.runId && statusId(event.callId) &&
+        o?.version === 1 && o.agent === event.agent && o.sessionKey === event.sessionKey && o.sessionId === event.sessionId &&
+        o.runId === event.runId && o.callId === event.callId && typeof o.tool === 'string' && /^[A-Za-z0-9_.]{1,160}$/.test(o.tool) &&
+        ({start:'Tool started',result:'Tool finished',error:'Tool failed'})[o.phase] === event.kind &&
+        Number.isFinite(s?.observedAt) && s.observedAt <= now && Number.isFinite(s.freshUntil) && s.freshUntil > now &&
+        Number.isFinite(event.timestamp) && event.timestamp > 0 && event.timestamp <= now;
+    }).sort((a,b)=>b.timestamp-a.timestamp || a.id.localeCompare(b.id));
+    const conflicted=new Set();
+    for (const e of matches) {
+      const same=matches.filter(other=>other.callId === e.callId);
+      if (new Set(same.map(other=>other.observation.toolName ?? other.observation.tool)).size>1 ||
+          same.some(other=>other.observation.phase === 'result') && same.some(other=>other.observation.phase === 'error')) conflicted.add(e.callId);
+    }
+    // A terminal observation supersedes a same-call start, even across pages.
+    const event=matches.find(e=>!conflicted.has(e.callId) && (e.observation.phase !== 'start' || !matches.some(other=>other.callId === e.callId && other.observation.phase !== 'start')));
+    const gap=coverage.partial === true || Number(coverage.upstreamDropped)>0 || Number(coverage.droppedKnown)>0 || Number(coverage.sourceConflictCount)>0;
+    if (!event) return {...base,summary:'No exact-run tool event observed'+(gap?' · partial/gapped window':'')+(conflicted.size?' · conflicting call facts withheld':'')};
+    const phase=event.observation.phase,tool=typeof event.observation.toolName === 'string' && /^[A-Za-z0-9_.]{1,160}$/.test(event.observation.toolName) ? event.observation.toolName : event.observation.tool;
+    const fact=phase === 'start' ? 'Start observed · outcome not observed' : phase === 'error' ? 'Error observed' : 'Return observed';
+    return {...base,event,summary:tool+' · '+fact+' · observed '+Math.floor((now-event.timestamp)/1000)+'s ago'+
+      (gap?' · partial/gapped window':'')+' · present execution unknown'};
+  }
   const PIN_LIMITS = Object.freeze({perSession:30,total:180,historyPerSession:60,historyTotal:240,text:2000,title:160,id:512,sessionId:256});
   const PIN_SCOPE = 'device-local';
   const pinId = (value,max=PIN_LIMITS.id) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\s\u0000-\u001f\u007f-\u009f]/u.test(value);
@@ -141,5 +191,5 @@
     }
     preferences(patch) { Object.assign(this.data.preferences,patch);if (![.5,.75,1,1.25,1.5,2].includes(this.data.preferences.playbackRate)) this.data.preferences.playbackRate=1;this.save();return this.data.preferences; }
   }
-  window.DracoState = {ClientState,AGENTS,KEY,PIN_LIMITS};
+  window.DracoState = {ClientState,AGENTS,KEY,PIN_LIMITS,occupancyLabel,conversationTarget,runObservation};
 })();

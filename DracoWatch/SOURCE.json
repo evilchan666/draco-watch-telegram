@@ -1,10 +1,13 @@
 {
-  "watchSource": "387e0ccaecc646610d8e0839c501fee5952b63df",
+  "watchSource": "0ef673a142b389ef4c378c5087ea6b2a4eff86d5",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,
   "updaterPublished": false,
   "physicalAcceptance": "unverified",
   "taskProgressBackend": "staged separately in Watch source; not activated",
-  "idleBubbleExpiryMs": 60000
+  "idleBubbleExpiryMs": 60000,
+  "packagedCandidateWatchSource": "387e0ccaecc646610d8e0839c501fee5952b63df",
+  "statusTruthDelta": "source only; Run open is occupancy, exact conversation observations do not prove current execution or waiting",
+  "newApkBuilt": false
 }

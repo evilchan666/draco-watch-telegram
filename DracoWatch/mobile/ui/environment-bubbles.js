@@ -20,7 +20,7 @@
   }
   const preview=value=>{const text=previewText(value),characters=Array.from(text);return characters.length>145?characters.slice(0,144).join('')+'…':text;};
   const clock=value=>{const date=new Date(value);return String(date.getHours()).padStart(2,'0')+':'+String(date.getMinutes()).padStart(2,'0');};
-  const stateLabel=status=>({active:'Active',idle:'Idle',queued:'Queued'})[status]||'Unobserved';
+  const stateLabel=status=>({active:'Run open',idle:'No open run',queued:'Queued'})[status]||'Unobserved';
   // Android may already incorporate textZoom in computed font pixels. Compare
   // against the native/app scale contract rather than multiplying it twice.
   const resolveFontScale=(computedFont,nativeFontScale=1,appFontScale=1)=>Math.max(1,(Number(computedFont)||12)/12,(Number(nativeFontScale)||1)*(Number(appFontScale)||1));

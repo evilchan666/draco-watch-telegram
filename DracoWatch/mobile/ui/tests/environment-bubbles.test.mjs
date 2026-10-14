@@ -45,7 +45,8 @@ test('a newer attachment-only event replaces the old report with explicit unavai
 test('reports older than 15 minutes are explicitly labelled historical, state fallback is not fabricated speech',()=>{
   const {selectReports}=helper(),rows=agents();rows.get('main').status='idle';rows.get('forge').status='queued';
   const result=selectReports([message('atlas',{timestamp:now-16*60000}),message('vvv',{timestamp:new Date(now-30000).toISOString()})],rows,{live:true,now,specs});
-  assert.match(result.find(report=>report.id==='atlas').label,/^Last report · \d{2}:\d{2}$/);assert.equal(result.find(report=>report.id==='main').label,'Idle');assert.equal(result.find(report=>report.id==='forge').label,'Queued');assert.equal(result.find(report=>report.id==='vvv').kind,'report');
+  assert.match(result.find(report=>report.id==='atlas').label,/^Last report · \d{2}:\d{2}$/);assert.equal(result.find(report=>report.id==='main').label,'No open run');assert.equal(result.find(report=>report.id==='main').status,'idle');assert.equal(result.find(report=>report.id==='forge').label,'Queued');assert.equal(result.find(report=>report.id==='vvv').kind,'report');
+  const open=result.find(report=>report.id==='daedalus');assert.equal(open.label,'Run open');assert.equal(open.status,'active');
 });
 
 test('preview compacts whitespace and safely truncates Unicode without parsing markup',()=>{
