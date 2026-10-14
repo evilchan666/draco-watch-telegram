@@ -182,7 +182,7 @@ try{
   await evaluate('__extra=Array.from({length:100},(_,i)=>({...__messages("forge")[0],id:"history-"+i,text:"Public historical "+i}));onDracoSnapshot(__snapshot("forge"))');
   await act('goto',{id:'public:physical:forge'});await expect('__last.messages.some(m=>m.id==="public:physical:forge")','pin navigation can select an older loaded message beyond the latest 50-row window');
   await evaluate('__extra=[];onDracoSnapshot(__snapshot("forge"))');await pause(90);
-  await expect('__last.messages.length>0&&__last.messages.length<=4&&__last.messages.some(m=>m.id==="public:physical:forge")','a narrowed current history clamps the native window and preserves its requested current anchor');
+  await expect('__last.messages.filter(m=>!m.localSubmission).length===4&&__last.messages.every(m=>!m.id.startsWith("history-"))&&__last.messages.some(m=>m.id==="public:physical:forge")&&__last.messages.some(m=>m.localSubmission&&m.id===__sent.id&&m.text===__sent.body.text)','a narrowed public history clamps the native window and preserves the requested anchor plus original local request');
   // New status cases exercise the rendered payload, not just the pure helper.
   await act('openChat',{agent:'atlas'});
   await evaluate('(()=>{const s=__snapshot("atlas");s.agents.find(a=>a.id==="atlas").conversationStatus="idle";onDracoSnapshot(s)})()');await pause(90);

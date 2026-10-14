@@ -288,6 +288,9 @@ public final class TelegramSurface extends FrameLayout {
         voiceBar.addView(voice, new LinearLayout.LayoutParams(0, -2, 1));
         speed = button("1×", "Change pitch-preserving audio playback speed");
         speed.setTag("telegram-speed");
+        // Short rates such as 1× still need the same complete touch target.
+        speed.setMinWidth(dp(42));
+        speed.setMinimumWidth(dp(42));
         speed.setOnClickListener(v -> showRates());
         voiceBar.addView(speed, new LinearLayout.LayoutParams(-2, -2));
         stopAudio = button("Stop audio", "Stop audio immediately");

@@ -176,7 +176,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
         waitShowing(true); waitRows("Task progress 1/3");
         click(revealRowControl("telegram-expand-bridge-progress-card"));
         TextView evidence=(TextView)requireTag("telegram-evidence-bridge-progress-card");String detail=ui(()->evidence.getText().toString());
-        check(detail.contains("Task progress: 1/3 complete")&&detail.contains("Current step: Integrate native controls"),"actual bridge/native public progress recomputes completed count and current step rather than trusting derived fields");
+        check(detail.contains("Task progress: 1/3 complete")&&detail.contains("Reported current step: Integrate native controls"),"actual bridge/native public progress recomputes completed count and current step rather than trusting derived fields");
         check(detail.contains("☑ Preserve current release")&&detail.contains("▶ Integrate native controls")&&detail.contains("☐ Verify live operational stream"),"native read-only evidence retains the explicit completed/current/pending checklist");
         check(detail.contains("bridge:atlas")&&detail.contains(""+SESSION)&&detail.contains("bridge-owned-run")&&detail.contains("bridge-progress-call"),"native public progress detail remains bound to exact supplied owner session/run/call");
         check(!rowsText().contains("PRIVATE_CONTEXT_SHOULD_NOT_BE_RENDERED")&&!detail.contains("FORGED_DERIVED_VALUE")&&detail.contains("not private planning"),"public progress rendering excludes private extras and labels its operator-visible source");
@@ -186,8 +186,11 @@ public final class TelegramBridgeChecks extends Instrumentation {
     private void readableControl(String id, Rect root, String label) throws Exception {
         View v = requireTag(id); if (!ui(() -> v.isShown())) return;
         Rect r = ui(() -> { Rect measured = new Rect(); v.getGlobalVisibleRect(measured); return measured; });
-        check(r.width() >= dp(40) - 1 && r.height() >= dp(40) - 1 && r.width() >= ui(() -> v.getWidth()) - 1 && r.height() >= ui(() -> v.getHeight()) - 1
-            && r.left >= root.left - 1 && r.right <= root.right + 1 && r.top >= root.top - 1 && r.bottom <= root.bottom + 1, label + " " + id + " has a complete at-least-40dp touch target");
+        int width = ui(() -> v.getWidth()), height = ui(() -> v.getHeight());
+        boolean complete = r.width() >= dp(40) - 1 && r.height() >= dp(40) - 1 && r.width() >= width - 1 && r.height() >= height - 1
+            && r.left >= root.left - 1 && r.right <= root.right + 1 && r.top >= root.top - 1 && r.bottom <= root.bottom + 1;
+        check(complete, label + " " + id + " has a complete at-least-40dp touch target"
+            + (complete ? "" : " (visible=" + r.toShortString() + ", measured=" + width + "×" + height + ", minimum=" + dp(40) + "px)"));
         check(ui(() -> v.getContentDescription() != null && v.getContentDescription().length() > 0), label + " " + id + " retains accessible action semantics");
         if (v instanceof TextView) { TextView text = (TextView) v;
             if (ui(() -> text.getText().length()) == 0) check(ui(() -> { for (android.graphics.drawable.Drawable d : text.getCompoundDrawables()) if (d != null) return true; return false; }), label + " " + id + " renders a real native icon rather than an empty action");
