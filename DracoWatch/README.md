@@ -9,7 +9,9 @@ original black/red identity, per-agent accents and existing spatial views remain
 
 ## 0.3.2
 
-See the [full version guide](GUIDE-032.md) and [owned work record](ANDROID-032-WORK.md).
+0.3.2/code21 is published to the authenticated private updater. Phone installation
+and usability remain unverified. See the [full version guide](GUIDE-032.md),
+[release evidence](ANDROID-032-RELEASE.md) and [owned work record](ANDROID-032-WORK.md).
 Chat is compact; audio defaults to manual, with exact-report pause/resume/seek/Stop.
 Activity follows the live edge, preserves scrollback and offers owner-record
 inspection through exact authenticated source/revision retrieval. Support diagnostics

@@ -5,8 +5,8 @@
   "loginMigration": false,
   "versionName": "0.3.2",
   "versionCode": 21,
-  "releaseState": "composed source; package and updater recorded separately after verification",
-  "updaterPublished": false,
+  "releaseState": "actual serving private updater and pinned download verified; phone install and acceptance unknown",
+  "updaterPublished": true,
   "physicalAcceptance": "unverified",
   "backendWatchSource": "e5a2f75a64c5f3dfe4008c9ffffda06de35a47f6",
   "preservedBaseline": {
@@ -302,5 +302,9 @@
       "path": "mobile/ui/tests/telegram-native.spec.mjs",
       "sha256": "2ddef4882177981cf624b9d468e17444cb47b5803a1eb200383375c65a7a954e"
     }
-  ]
+  ],
+  "packagedForkSource": "099c8568bad4978108fe4306554debe1d41537ce",
+  "apkSha256": "119e8538be761a06de2acbf869943ed0f27ca775f66a9a5b3b6339b0d5d9001f",
+  "apkBytes": 193609,
+  "signingCertificateSha256": "8579d7acc91dc2d4cc185d0624160e5f7fb8c862db034be00af84e5f195eddc2"
 }
