@@ -63,6 +63,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private static String repeat(String value, int count) { StringBuilder out = new StringBuilder(); for (int i=0;i<count;i++)out.append(value);return out.toString(); }
     private boolean flag(String key) { Object value=arguments.get(key);return value instanceof Boolean?(Boolean)value:Boolean.parseBoolean(String.valueOf(value)); }
     private Field activityField(String name) throws Exception { Field f=activity.getClass().getDeclaredField(name);f.setAccessible(true);return f; }
+    private Object surfaceField(String name) throws Exception { Field f=TelegramSurface.class.getDeclaredField(name);f.setAccessible(true);return ui(()->f.get(surface)); }
     private List<View> descendants(View root) {
         List<View> result = new ArrayList<>(); result.add(root);
         if (root instanceof ViewGroup) { ViewGroup group=(ViewGroup)root;for(int i=0;i<group.getChildCount();i++)result.addAll(descendants(group.getChildAt(i))); }
@@ -297,9 +298,65 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         check(composerHeight<=Math.floor(root.height()*(shortHeight?.34:.24)),label+" bounded composer leaves message space rather than consuming the screen");
         check(ui(()->draft.getWidth())>=dp(100),label+" draft retains a useful at-least-100dp typing width");
         check(ui(()->draft.getHeight())<=Math.max(dp(96),3*ui(()->draft.getLineHeight())+ui(()->draft.getCompoundPaddingTop()+draft.getCompoundPaddingBottom())),label+" draft scrolls within a bounded multiline editor");
-        for(String id:new String[]{"telegram-send","telegram-send-mode","telegram-mic","telegram-attach","telegram-stop-run","telegram-options","telegram-pin-options","telegram-speed","telegram-stop-audio","telegram-nav-chats","telegram-nav-chamber","telegram-nav-environment","telegram-nav-activity","telegram-nav-settings"})readableControl(id,root,label);
+        for(String id:new String[]{"telegram-send","telegram-send-mode","telegram-mic","telegram-attach","telegram-stop-run","telegram-options","telegram-pin-options","telegram-nav-chats","telegram-nav-chamber","telegram-nav-environment","telegram-nav-activity","telegram-nav-settings"})readableControl(id,root,label);
         float configured=activity.getResources().getConfiguration().fontScale;
         if(flag("requireFont150"))check(configured>=1.49f,"Android native system font is actually enlarged to 150 percent");
+    }
+    private void manualPlayerAndLiveTimeline() throws Exception {
+        JSONObject model=base(true,"atlas");render(model);
+        check(ui(()->requireTag("telegram-audio-player").getVisibility())==View.GONE,"idle chat reserves no audio toolbar space");
+        check(ui(()->requireTag("telegram-history-state").getVisibility())==View.GONE,"chat coverage is not a stacked always-open warning strip");
+        View compactWork=requireTag("telegram-work-summary");
+        if(ui(()->compactWork.isShown())){
+            check(ui(()->((TextView)compactWork).getText().toString()).contains("coverage"),"portrait work and coverage is one compact row");
+            click(compactWork);
+        }else{
+            check(ui(()->requireTag("telegram-title").isShown()),"short layout retains visible title access to complete state and coverage");
+            click(requireTag("telegram-title"));
+        }
+        check(findNode("Work, state and coverage")!=null,"compact row or short-layout title opens actual work and coverage dialog");
+        AccessibilityNodeInfo coverageRoot=getUiAutomation().getRootInActiveWindow();
+        check(coverageRoot!=null&&!coverageRoot.findAccessibilityNodeInfosByText(model.optString("workSummary")).isEmpty()&&!coverageRoot.findAccessibilityNodeInfosByText(model.optString("historyNote")).isEmpty(),"expanded compact coverage retains supplied work summary and history coverage");
+        dialogChoice("Close");
+        model.put("audio",json("id","fixture-playback-atlas","agent","atlas","sessionId","physical-atlas","messageId","m1","state","playing","source","recording","label","Exact report m1","positionMs",1500,"durationMs",10000,"canPause",true,"canSeek",true));
+        render(model);int before=actions.size();click(requireTag("telegram-pause-audio"));
+        JSONObject paused=event(before,"audioPause");check(exactScope(paused,"atlas")&&"fixture-playback-atlas".equals(paused.getJSONObject("data").optString("playbackId")),"pause targets exact report playback and physical session");
+        check(ui(()->((TextView)requireTag("telegram-audio-time")).getText().toString()).equals("0:01 / 0:10"),"player displays native position and duration rather than a generic voice label");
+        model.getJSONObject("audio").put("state","paused");render(model);before=actions.size();click(requireTag("telegram-pause-audio"));
+        check(exactScope(event(before,"audioResume"),"atlas"),"resume remains explicit and owner scoped");
+        model.getJSONObject("audio").put("sessionId","old-session");render(model);
+        check(ui(()->requireTag("telegram-audio-player").getVisibility())==View.GONE,"foreign or replaced physical-session audio is not offered");
+        JSONObject feed=base(false,"atlas");feed.put("view","activity").put("activityFilter","all").put("activityMode","live");
+        JSONArray events=new JSONArray();long start=System.currentTimeMillis()-100000;
+        for(int i=55;i>=0;i--)events.put(json("id","live-"+i,"agent","atlas","sessionId","physical-atlas","timestamp",start+i*1000,"preview",repeat("Synthetic operational evidence. ",8),"revision","same-"+i));
+        feed.put("activity",events);render(feed);
+        ListView timeline=timeline();check(ui(()->timeline.getLastVisiblePosition())==ui(()->timeline.getAdapter().getCount()-1),"Activity enters at latest bottom despite newest-first incoming payload");
+        View firstEvent=rowForKey("activity:"+JSONObject.quote("atlas")+":"+JSONObject.quote("physical-atlas")+":"+JSONObject.quote("live-0"));
+        check(firstEvent!=null,"chronological Activity retains earliest event identity");
+        ui(()->{timeline.setSelectionFromTop(3,-8);return null;});waitForIdleSync();SystemClock.sleep(100);
+        int anchor=ui(()->timeline.getFirstVisiblePosition());long anchorId=ui(()->timeline.getAdapter().getItemId(anchor));
+        events.put(json("id","live-56","agent","atlas","sessionId","physical-atlas","timestamp",start+56000,"preview","New synthetic event","revision","new"));render(feed);
+        check(ui(()->timeline.getAdapter().getItemId(timeline.getFirstVisiblePosition()))==anchorId,"new Activity event preserves user backscroll anchor");
+        check(((Integer)surfaceField("unreadTimeline"))==1,"one new event creates one unread observation");
+        events.getJSONObject(0).put("revision","updated-existing");render(feed);
+        check(((Integer)surfaceField("unreadTimeline"))==1,"existing event revision does not manufacture another unread event");
+        click(requireTag("telegram-jump-latest"));waitForIdleSync();
+        check(ui(()->timeline.getLastVisiblePosition())==ui(()->timeline.getAdapter().getCount()-1)&&((Integer)surfaceField("unreadTimeline"))==0,"Resume live reaches latest and clears only timeline unread state");
+        events.put(json("id","live-57","agent","atlas","sessionId","physical-atlas","timestamp",start+57000,"preview","Next live synthetic event","revision","next"));render(feed);
+        check(ui(()->timeline.getLastVisiblePosition())==ui(()->timeline.getAdapter().getCount()-1),"Activity follows subsequent updates once live edge resumes");
+        feed.put("activityFilter","forge").put("activity",new JSONArray());render(feed);
+        check(((Integer)surfaceField("unreadTimeline"))==0,"agent-filter replacement resets timeline unread identity without retaining foreign state");
+    }
+    private void localInspectionConsent() throws Exception {
+        check(!activityField("localWebInspection").getBoolean(activity),"local WebView inspection starts disabled and is not a persistent preference");
+        java.lang.reflect.Method request=MonitorActivity.class.getDeclaredMethod("requestLocalWebInspection");request.setAccessible(true);
+        ui(()->{request.invoke(activity);return null;});waitForIdleSync();
+        check(!activityField("localWebInspection").getBoolean(activity),"opening local-inspection confirmation alone cannot enable debugging");
+        dialogChoice("Cancel");check(!activityField("localWebInspection").getBoolean(activity),"declining local inspection leaves debugging disabled");
+        ui(()->{request.invoke(activity);return null;});waitForIdleSync();dialogChoice("Enable this foreground session");
+        check(activityField("localWebInspection").getBoolean(activity),"only explicit Android confirmation enables local foreground inspection");
+        ui(()->{request.invoke(activity);return null;});waitForIdleSync();
+        check(!activityField("localWebInspection").getBoolean(activity),"second explicit toggle disables local inspection without another enable prompt");
     }
     @Override public void onStart() {
         Bundle result=new Bundle();
@@ -308,6 +365,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(activityField("profile").get(activity)==null,"target APK is unpaired; synthetic test cannot contact production");
             AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
             ui(()->{surface=new TelegramSurface(activity,(action,data)->{try{actions.add(json("action",action,"data",new JSONObject(data.toString())));}catch(Exception error){throw new AssertionError(error);}});activity.setContentView(surface);return null;});
+            localInspectionConsent();
             render(base(false,"main"));
             check(ui(()->surface.showing()),"actual native Telegram-derived surface is displayed");
             check(ui(()->classCount(surface,"org.telegram.ui.Components.ChatActivityEnterTopView"))==1,"actual upstream composer-top container instantiated");
@@ -321,6 +379,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(ui(()->full.getEllipsize())==null&&ui(()->full.getMaxLines())>1000,"full report is not visually ellipsized or line-clamped");
             identityModesAndInlineEvidence();
             localRequestsAndDates();
+            manualPlayerAndLiveTimeline();render(base(true,"atlas"));
             check(ui(()->requireTag("telegram-pinned-banner").getVisibility())==View.VISIBLE,"native pin banner is visible with retained pins");
             int beforeDraft=actions.size();EditText draft=(EditText)requireTag("telegram-draft");ui(()->{draft.requestFocus();draft.setText("EXACT NEW SYNTHETIC DRAFT\nKeep every character.");return null;});
             JSONObject draftEvent=event(beforeDraft,"draft");check(exactScope(draftEvent,"atlas")&&draftEvent.getJSONObject("data").optString("text").equals(draft.getText().toString()),"native draft callback keeps exact text and physical-session scope");

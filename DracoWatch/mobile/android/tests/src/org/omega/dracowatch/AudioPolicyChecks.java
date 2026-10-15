@@ -10,10 +10,10 @@ import java.util.concurrent.*;
 
 /** Actual candidate Activity/player plus a separate APK UID; no prompts or voice synthesis. */
 public final class AudioPolicyChecks extends Instrumentation {
-    private int checks; private Messenger competitor; private Activity activity;
+    private int checks; private Messenger competitor; private Activity activity; private Bundle arguments;
     private final BlockingQueue<Bundle> replies=new LinkedBlockingQueue<>();
     private Messenger receiver;
-    @Override public void onCreate(Bundle args){super.onCreate(args);start();}
+    @Override public void onCreate(Bundle args){arguments=args==null?new Bundle():args;super.onCreate(args);start();}
     private void check(boolean condition,String label){if(!condition)throw new AssertionError(label);checks++;android.util.Log.i("DracoAudioCheck","PASS "+label);}
     private interface Action{void run()throws Exception;}
     private void main(Action action)throws Exception{Throwable[] failure={null};runOnMainSync(()->{try{action.run();}catch(Throwable error){failure[0]=error;}});if(failure[0]!=null)throw new Exception(failure[0]);}
@@ -23,7 +23,7 @@ public final class AudioPolicyChecks extends Instrumentation {
     private void startClip(File tone,String id)throws Exception{main(()->{method("stopPlayback").invoke(activity);field("playingId").set(activity,id);method("playLocal",File.class,String.class,String.class).invoke(activity,tone,"audio/wav",id);});for(int i=0;i<60;i++){boolean[] ready={false};main(()->{MediaPlayer player=(MediaPlayer)field("player").get(activity);ready[0]=player!=null&&field("playerPrepared").getBoolean(activity)&&player.isPlaying();});if(ready[0])return;Thread.sleep(100);}throw new AssertionError("Candidate player never started");}
     @Override public void onStart(){Bundle result=new Bundle();ServiceConnection binding=null;File tone=null;
         try{
-            check(getTargetContext().getPackageManager().getPackageInfo(getTargetContext().getPackageName(),0).versionName.equals("0.2.13-candidate"),"installed candidate identity");
+            String expected=arguments.getString("targetVersion","0.3.2-candidate");check(getTargetContext().getPackageManager().getPackageInfo(getTargetContext().getPackageName(),0).versionName.equals(expected),"installed candidate identity: "+expected);
             main(()->receiver=new Messenger(new Handler(Looper.getMainLooper(),message->{replies.offer(message.getData());return true;})));
             CountDownLatch bound=new CountDownLatch(1);binding=new ServiceConnection(){public void onServiceConnected(ComponentName name,IBinder service){competitor=new Messenger(service);bound.countDown();}public void onServiceDisconnected(ComponentName name){competitor=null;}};
             getTargetContext().bindService(new Intent().setComponent(new ComponentName("org.omega.dracowatch.checks","org.omega.dracowatch.CompetingAudioService")),binding,Context.BIND_AUTO_CREATE);
@@ -55,6 +55,15 @@ public final class AudioPolicyChecks extends Instrumentation {
                 Bundle music=observe();check(music.getBoolean("playing")&&music.getInt("focusLosses")==0&&music.getInt("volume")==volume,"competing music continues without focus loss or stream-volume change at "+rate);
             }
             check(observe().getInt("position")>beforeMusic+3000,"independent competing-media position advances continuously");
+            main(()->method("pausePlayback",String.class).invoke(activity,"synthetic-autoplay"));
+            int[] pausedPosition={0};main(()->pausedPosition[0]=((MediaPlayer)field("player").get(activity)).getCurrentPosition());Thread.sleep(300);
+            check(!((MediaPlayer)field("player").get(activity)).isPlaying()&&Math.abs(((MediaPlayer)field("player").get(activity)).getCurrentPosition()-pausedPosition[0])<100,"exact-report Pause holds position without releasing the player");
+            main(()->{method("resumePlayback",String.class).invoke(activity,"wrong-id");method("seekPlayback",String.class,long.class).invoke(activity,"wrong-id",100L);});
+            check(!((MediaPlayer)field("player").get(activity)).isPlaying()&&Math.abs(((MediaPlayer)field("player").get(activity)).getCurrentPosition()-pausedPosition[0])<100,"stale report IDs cannot resume or seek the current audio");
+            main(()->method("seekPlayback",String.class,long.class).invoke(activity,"synthetic-autoplay",2000L));Thread.sleep(250);
+            check(!((MediaPlayer)field("player").get(activity)).isPlaying()&&Math.abs(((MediaPlayer)field("player").get(activity)).getCurrentPosition()-2000)<300,"seeking an exact paused report moves position without restarting playback");
+            main(()->method("resumePlayback",String.class).invoke(activity,"synthetic-autoplay"));
+            check(((MediaPlayer)field("player").get(activity)).isPlaying()&&((MediaPlayer)field("player").get(activity)).getPlaybackParams().getPitch()==1f,"explicit exact-report Resume restores playback with fixed pitch");
             main(()->method("changePlaybackRate",float.class).invoke(activity,3f));check(field("playbackRate").getFloat(activity)==2f,"invalid speed cannot replace the saved valid preference");
             main(()->{((MediaPlayer)field("player").get(activity)).pause();method("changePlaybackRate",float.class).invoke(activity,1.5f);});
             check(!((MediaPlayer)field("player").get(activity)).isPlaying(),"changing speed never restarts a paused or ended player");

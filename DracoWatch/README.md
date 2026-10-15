@@ -1,43 +1,35 @@
 # DRACO Watch native Telegram integration
 
-This standalone Android module is part of the actual draco-watch-telegram fork.
-It reuses the fork's genuine Telegram message-bubble path, animated pinned-line,
-back-navigation and enter-top components. See
-[component provenance](mobile/android/TELEGRAM-PROVENANCE.md) for exact originals,
-license, adaptations and limits. It is not a Telegram service/login migration and
-is not a claim of full Telegram ChatActivity or ChatMessageCell parity.
+This module lives in the actual draco-watch-telegram fork. It retains the genuine
+Telegram-derived message-bubble, pinned-line, back-navigation and enter-top
+components. See [component provenance](mobile/android/TELEGRAM-PROVENANCE.md).
+It is a bounded native component integration, not a Telegram login/transport
+migration or full Telegram ChatActivity parity. Watch's authenticated backend,
+original black/red identity, per-agent accents and existing spatial views remain.
 
-Watch's existing authenticated backend, capabilities, exact-session/run controls,
-durable drafts/outbox, attachment pipeline and approved per-agent speech remain
-the transport and custody authority. Chat, agent roster, pins and execution stream
-are native; Chamber, Environment and Settings retain their existing bundled views.
-Advanced dialogs temporarily reveal the retained bundled UI, rather than losing
-working controls. Pins are device-local, exact physical-session snapshots, not
-Telegram server pins. Admitted public reports and owner-bound operational facts
-enter this renderer; exact device-local request bodies remain separately labelled
-as local admission custody, never public attestation or completion. Private
-reasoning and raw tool payloads do not enter this renderer.
+## 0.3.2
 
-The latest source-only [request/chronology repair](REQUEST-CHRONOLOGY-3474.md)
-has not been packaged or activated. SOURCE.json separately retains the previously
-packaged candidate's source pin and unverified physical acceptance.
+See the [full version guide](GUIDE-032.md) and [owned work record](ANDROID-032-WORK.md).
+Chat is compact; audio defaults to manual, with exact-report pause/resume/seek/Stop.
+Activity follows the live edge, preserves scrollback and offers owner-record
+inspection through exact authenticated source/revision retrieval. Support diagnostics
+include private metadata/crash journals and JSON export. Local WebView inspection
+requires explicit Android consent and turns off in the background.
 
-## Build the unpaired candidate
+Retained owner tool originals are read separately from concise public summaries;
+no model reasoning is reconstructed. Missing producer media/text bindings and host
+exact-run Steer remain explicit gaps, not fabricated outcomes or Queue substitution.
 
-From this directory run `bash mobile/android/build.sh`. It uses Android SDK35
-build-tools35.0.0 and a Java21 JDK; override DRACO_ANDROID_SDK/DRACO_JDK as needed.
-No Telegram API key, Firebase, network dependency resolution or Telegram login is
-needed. A private profile may be supplied through DRACO_PROFILE; never commit it
-or the resulting paired APK. Use the existing signing identity for upgrades.
-SOURCE.json pins the Watch source and Telegram base. Generated output stays under
-ignored build/runtime directories. The integrated APK is not yet live by virtue
-of a successful build; real handset acceptance must be recorded separately.
+SOURCE.json records exact Watch source and preserved0.3.1 baseline. Package,
+serving backend/updater, installation and physical acceptance are separate stages.
+The historical REQUEST-CHRONOLOGY-3474.md describes an earlier source-only handoff;
+its then-open package/Android states are not the current release evidence.
 
-## Corrective update 0.3.1
+## Build
 
-Restores the original black/red Watch identity and supplied agent colours. Commands,
-provided exit/output excerpts and public reported checklists are inline. The visible
-Send/Queue/Steer selector changes draft mode without submitting it; unsupported
-exact-run Steer refuses rather than silently dispatching Queue/follow-up.
-Chamber, Environment, pinning, saved custody, speech profiles and pairing remain.
-Source/package/backend publication and physical handset acceptance are separate.
+Run `bash mobile/android/build.sh` here. AndroidSDK35/build-tools35.0.0 and Java21
+are used; DRACO_ANDROID_SDK/DRACO_JDK can override their locations. No Telegram API
+key, Firebase, dependency download or Telegram login is needed. A private profile
+may be supplied via DRACO_PROFILE; never commit it or the paired APK. Upgrades
+retain the original signer. GPL notices and corresponding source remain included.
+Generated output stays ignored. Successful build is not handset acceptance.

@@ -10,7 +10,7 @@ const message=(id,extra={})=>({id,role:'assistant',kind:'reply',text:'Public '+i
   publicAttested:true,source:'authenticated-native-history',speechFinal:{runId:'run-'+id},...extra});
 function fixture(){let now=1000,n=0;const jobs=[],plays=[],statuses=[],stops=[];
   const queue=new ReplySpeech({now:()=>now,id:()=>String(++n),prepare:body=>new Promise((resolve,reject)=>jobs.push({body,resolve,reject})),play:(path,id)=>plays.push({path,id}),stop:()=>stops.push(1),status:value=>statuses.push(value)});
-  const context={agent:'aera-new',sessionId:'session-a',ready:true};
+  const context={agent:'aera-new',sessionId:'session-a',ready:true,enabled:true};
   const sync=(rows,patch={})=>queue.sync({...context,...patch},rows);
   const complete=index=>{const job=jobs[index];job.resolve({...job.body,path:'/v1/speech/'+'a'.repeat(64)});};
   sync([message('hydrated',{timestamp:800})]);now=1020;
@@ -64,4 +64,17 @@ test('synthesis failure is visible and is not automatically retried; deliberate 
 test('historical page hydration is silent but a subsequent fresh final still speaks',()=>{
   const f=fixture();f.sync([message('page-new-to-view')],{hydrate:true});assert.equal(f.jobs.length,0);
   f.sync([message('page-new-to-view'),message('genuinely-fresh',{timestamp:1015})]);assert.equal(f.jobs.length,1);assert.equal(f.jobs[0].body.messageId,'genuinely-fresh');
+});
+
+test('omitted/default preference is manual-first across opening, fresh receive, reconnect and resume',()=>{
+  const jobs=[],queue=new ReplySpeech({prepare:body=>jobs.push(body),play:()=>{},stop:()=>{},status:()=>{},now:()=>2000,id:()=> 'one'});
+  const context={agent:'aera-new',sessionId:'session-a',ready:true};
+  queue.sync(context,[message('first')]);queue.sync(context,[message('fresh',{timestamp:2000})]);
+  queue.sync({...context,ready:false},[]);queue.sync(context,[message('fresh',{timestamp:2000})]);queue.sync(context,[message('newer',{timestamp:2000})]);
+  assert.equal(jobs.length,0);assert.equal(queue.enabled,false);
+});
+test('manual phases retain exact report scope/source and cancellation does not play a late asset',async()=>{
+  const f=fixture(),m=message('manual');f.sync([m],{enabled:false});f.queue.manual(m);
+  const preparing=f.statuses.at(-1);assert.equal(preparing.agent,'aera-new');assert.equal(preparing.sessionId,'session-a');assert.equal(preparing.messageId,'manual');assert.equal(preparing.source,'synthesis');assert.equal(preparing.automatic,false);assert.ok(preparing.playbackId);
+  f.queue.cancel();f.complete(0);await tick();assert.equal(f.plays.length,0);assert.equal(f.statuses.at(-1).state,'stopped');
 });

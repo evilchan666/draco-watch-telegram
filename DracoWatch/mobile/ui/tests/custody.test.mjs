@@ -19,3 +19,11 @@ test('late original acceptance resolves retry uncertainty and cannot be demoted'
 test('fresh phone clients keep Telegram copies off and identified older v2 clients retain continuity',()=>{const {State,storage}=fixture();assert.equal(new State(storage).data.preferences.echoToTelegram,false);storage.setItem('draco-watch-client-v2',JSON.stringify({preferences:{scale:100,motion:false,rendering:'auto'},drafts:{atlas:'legacy draft'},outbox:[]}));const migrated=new State(storage);assert.equal(migrated.data.preferences.echoToTelegram,true);migrated.preferences({echoToTelegram:false});assert.equal(new State(storage).data.preferences.echoToTelegram,false);});
 
 test('closed playback speed preference survives recreation; corrupt/unsupported speeds reset without input replay',()=>{const {State,storage}=fixture();for(const rate of [.5,.75,1,1.25,1.5,2]){const client=new State(storage);client.preferences({playbackRate:rate});assert.equal(new State(storage).data.preferences.playbackRate,rate);}const state=new State(storage);state.preferences({playbackRate:3});assert.equal(state.data.preferences.playbackRate,1);storage.setItem('draco-watch-client-v2',JSON.stringify({preferences:{playbackRate:'2'}}));const resumed=new State(storage);assert.equal(resumed.data.preferences.playbackRate,1);assert.equal(resumed.data.outbox.length,0);});
+
+test('manual-first migration resets every legacy implicit or on preference once and preserves deliberate v2 opt-in',()=>{
+  for(const preferences of [undefined,{}, {automaticSpeech:true},{automaticSpeech:false},{automaticSpeech:true,speechPreferenceVersion:1}]){
+    const {State,storage}=fixture();storage.setItem('draco-watch-client-v2',JSON.stringify({preferences,drafts:{atlas:'kept'},outbox:[]}));
+    const migrated=new State(storage);assert.equal(migrated.data.preferences.automaticSpeech,false);assert.equal(migrated.data.preferences.speechPreferenceVersion,2);assert.equal(migrated.draft('atlas'),'kept');assert.equal(new State(storage).data.preferences.automaticSpeech,false);
+    migrated.preferences({automaticSpeech:true,speechPreferenceVersion:2});assert.equal(new State(storage).data.preferences.automaticSpeech,true);
+  }
+});

@@ -12,8 +12,8 @@
   --gutter: clamp(.625rem, 2.7vw, 1.625rem);
   --space: clamp(.5rem, 1.6vw, 1rem);
   --touch: max(48px, 2.75rem);
-  --nav-h: max(68px, 4.5rem);
-  font: calc(clamp(1rem, .94rem + .2vw, 1.125rem) * var(--display-scale))/1.5 Roboto, "Noto Sans", system-ui, sans-serif;
+  --nav-h: 52px;
+  font: calc(16px * var(--display-scale))/1.5 Roboto, "Noto Sans", system-ui, sans-serif;
   font-synthesis: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -534,3 +534,28 @@ body.reduced-motion *, body.reduced-motion *::before, body.reduced-motion *::aft
 
 .input-mode { display:flex; align-items:center; gap:8px; font-size:.75rem; color:var(--muted); }
 .input-mode select { flex:1; width:auto; margin:2px 0; min-height:42px; padding:4px 8px; border-color:var(--red); }
+
+/* One baseline: 16px × app scale; native WebView textZoom applies Android font scale once. */
+:root { -webkit-text-size-adjust: none; text-size-adjust: none; }
+.bottom-nav { min-height:52px; }
+.chat-work-strip { position:static; min-height:34px; padding:4px 8px; margin-block:0 6px; box-shadow:none; background:#151515; border-color:#383838; }
+.history-note { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-height:25px; max-height:30px; padding:3px 10px; cursor:pointer; }
+.chat-header { min-height:52px; }
+.voice-player { padding:6px 10px; gap:6px; border-block:1px solid #383838; background:#111; color:#eee; }
+.voice-player #voice-status { flex:1 1 100%; font-size:.8rem; }
+.voice-player #voice-cancel-note { flex:1 1 100%; font-size:.65rem; color:#aaa; }
+.voice-player .audio-position { flex:0 0 auto; font-variant-numeric:tabular-nums; }
+.voice-player .audio-seek { flex:1 1 100%; min-height:36px; }
+.record-dialog { max-height:85vh; overflow:auto; }
+.record-dialog pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:.78rem; background:#090909; border:1px solid #444; padding:10px; max-height:55vh; overflow:auto; user-select:text; }
+.activity-latest { position:fixed; bottom:calc(var(--nav-h) + 16px); right:12px; z-index:8; border:1px solid var(--red); border-radius:20px; background:#222; padding:8px 14px; }
+.owner-detail-open { margin-top:8px; }
+@media (max-height:500px) { .voice-player { max-height:36vh; overflow:auto; } .history-note { min-height:22px; max-height:22px; } }
+
+/* Dialog controls stay visible; large records scroll in their own selection area. */
+.record-dialog[open] { display:flex; flex-direction:column; max-height:85dvh; overflow:hidden; }
+.record-dialog .dialog-heading, .record-dialog .button-row, .record-dialog > p { flex:0 0 auto; }
+.record-dialog pre { flex:1 1 auto; min-height:10vh; max-height:45vh; margin:8px 0; }
+.record-dialog .button-row { display:flex; flex-wrap:wrap; gap:6px; }
+.record-dialog button { min-height:48px; }
+.record-dialog .quiet-note { font-size:.7rem; line-height:1.25; }

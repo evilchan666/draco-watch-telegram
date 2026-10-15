@@ -24,13 +24,16 @@ final class DracoClient {
     static final Set<String> AGENTS = new HashSet<>(Arrays.asList("main","forge","atlas","aera-new","vvv","daedalus"));
     interface Progress { void update(long bytes, long total); }
     static final class Response {
-        final int status; final JSONObject data;
-        Response(int status, JSONObject data) { this.status=status; this.data=data; }
+        final int status; final JSONObject data; final String correlationId;
+        Response(int status, JSONObject data) { this(status,data,null); }
+        Response(int status, JSONObject data, String correlationId) { this.status=status; this.data=data; this.correlationId=safeCorrelation(correlationId); }
     }
     static final class Failure extends IOException {
-        final boolean uncertain; final int status;
-        Failure(String message, int status, boolean uncertain) { super(message); this.status=status; this.uncertain=uncertain; }
+        final boolean uncertain; final int status; final String correlationId;
+        Failure(String message, int status, boolean uncertain) { this(message,status,uncertain,null); }
+        Failure(String message, int status, boolean uncertain,String correlationId) { super(message); this.status=status; this.uncertain=uncertain;this.correlationId=safeCorrelation(correlationId); }
     }
+    static String safeCorrelation(String value){return value!=null&&value.matches("[A-Za-z0-9_.:-]{1,200}")?value:null;}
     static final class Profile {
         final List<String> origins = new ArrayList<>(); final String token; final SSLContext tls;
         private volatile String healthyOrigin;
@@ -79,10 +82,23 @@ final class DracoClient {
         new Profile(result);return result;
     }
     static boolean permitted(String method,String path){
+        if("GET".equals(method)&&ownerDetailPath(path))return true;
+        if("GET".equals(method)&&("/v1/diagnostics".equals(path)||"/v1/diagnostics/export".equals(path)))return true;
+        if("POST".equals(method)&&"/v1/diagnostics".equals(path))return true;
         if(path==null||path.length()>600||path.contains("#")||path.contains("..")||path.contains("\\")||path.contains("%"))return false;
         if("GET".equals(method))return path.equals("/v1/capabilities")||path.matches("/v1/capabilities\\?agent=(main|forge|atlas|aera-new|vvv|daedalus)")||path.equals("/v1/update")
             ||path.matches("/v1/(snapshot|history)\\?agent=(main|forge|atlas|aera-new|vvv|daedalus)(&[A-Za-z]+=[A-Za-z0-9_-]+)*");
         return "POST".equals(method)&&(path.equals("/v1/message")||path.equals("/v1/abort")||path.equals("/v1/speech"));
+    }
+    private static boolean ownerDetailPath(String path){
+        if(path==null||path.length()>8192||!path.startsWith("/v1/work/detail?")||path.contains("#")||path.contains("\\"))return false;
+        try{android.net.Uri uri=android.net.Uri.parse(path);if(!"/v1/work/detail".equals(uri.getPath())||uri.getScheme()!=null||uri.getHost()!=null)return false;
+            Set<String> required=new HashSet<>(Arrays.asList("agent","sessionKey","sessionId","runId","callId","recordId","revision"));Set<String> allowed=new HashSet<>(required);allowed.addAll(Arrays.asList("offset","limit","revealCredentials"));Set<String> actual=uri.getQueryParameterNames();if(!actual.containsAll(required)||!allowed.containsAll(actual))return false;
+            for(String key:actual){if(uri.getQueryParameters(key).size()!=1)return false;String value=uri.getQueryParameter(key);if(value==null||value.isEmpty()||value.length()>2048||value.matches("(?s).*[\\p{Cntrl}].*"))return false;}
+            if(!AGENTS.contains(uri.getQueryParameter("agent")))return false;
+            for(String key:Arrays.asList("offset","limit"))if(actual.contains(key)){String raw=uri.getQueryParameter(key);if(!raw.matches("[0-9]{1,8}"))return false;long number=Long.parseLong(raw);if(number<0||number>("limit".equals(key)?65536:16777216)||"limit".equals(key)&&number==0)return false;}
+            String reveal=uri.getQueryParameter("revealCredentials");return reveal==null||"true".equals(reveal)||"false".equals(reveal);
+        }catch(Exception ignored){return false;}
     }
     static boolean mediaPath(String path){
         if(path==null||path.length()>4096||path.contains("..")||path.contains("#")||path.contains("\\"))return false;
@@ -110,20 +126,21 @@ final class DracoClient {
         if(!permitted(method,path))throw new Failure("Unsupported native request.",0,false);
         boolean write="POST".equals(method); if(body!=null&&body.length>12*1024*1024)throw new Failure("Attachments exceed the 8 MB transfer limit.",0,false);
         Exception last=null;
-        for(String origin:profile.orderedOrigins()){HttpsURLConnection connection=null;boolean admitted=false;
+        for(String origin:profile.orderedOrigins()){HttpsURLConnection connection=null;boolean admitted=false;String correlationId=null;int httpStatus=0;
             try {connection=open(profile,origin,method,path);
                 if(write){connection.setDoOutput(true);connection.setRequestProperty("Content-Type","application/json");
                     byte[] payload=body==null?new byte[0]:body;connection.setFixedLengthStreamingMode(payload.length);
                     try(OutputStream output=connection.getOutputStream()){admitted=true;for(int pos=0;pos<payload.length;pos+=16384){int count=Math.min(16384,payload.length-pos);output.write(payload,pos,count);if(progress!=null)progress.update(pos+count,payload.length);}}}
-                int status=connection.getResponseCode();if(status>=300&&status<400)throw new Failure("Redirect refused. Delivery is unconfirmed for submitted messages.",status,write&&admitted);
-                String contentType=connection.getContentType();if(contentType==null||!contentType.toLowerCase(Locale.ROOT).startsWith("application/json"))throw new Failure("Invalid server response.",status,write&&admitted);
-                if(connection.getContentLengthLong()>JSON_CAP)throw new Failure("Server response is too large.",status,write&&admitted);
+                int status=connection.getResponseCode();httpStatus=status;correlationId=safeCorrelation(connection.getHeaderField("X-Draco-Request-Id"));if(status>=300&&status<400)throw new Failure("Redirect refused. Delivery is unconfirmed for submitted messages.",status,write&&admitted,correlationId);
+                String contentType=connection.getContentType();if(contentType==null||!contentType.toLowerCase(Locale.ROOT).startsWith("application/json"))throw new Failure("Invalid server response.",status,write&&admitted,correlationId);
+                if(connection.getContentLengthLong()>JSON_CAP)throw new Failure("Server response is too large.",status,write&&admitted,correlationId);
                 InputStream input=status<400?connection.getInputStream():connection.getErrorStream();
                 JSONObject value;try(InputStream stream=input){value=new JSONObject(readText(stream,JSON_CAP));}
                 if(status>=200&&status<300)profile.connected(origin);
-                return new Response(status,value);
+                return new Response(status,value,correlationId);
             }catch(Failure failure){throw failure;}catch(Exception failure){
-                if(write&&admitted)throw new Failure("Delivery is unconfirmed. Check this conversation before retrying.",0,true);
+                if(httpStatus>0)throw new Failure("Invalid server response.",httpStatus,write&&admitted,correlationId);
+                if(write&&admitted)throw new Failure("Delivery is unconfirmed. Check this conversation before retrying.",0,true,correlationId);
                 last=failure;
             }finally{if(connection!=null)connection.disconnect();}}
         throw new Failure("Connection unavailable. Check Wi-Fi or Tailscale.",0,false);

@@ -10,14 +10,17 @@
     constructor({prepare,play,stop,status,now=()=>Date.now(),id=()=>crypto.randomUUID()}) {
       Object.assign(this,{prepare,play,stop,status,now,id});
       this.epoch=0;this.scope='';this.ready=false;this.baseline=false;this.queue=[];
-      this.seen=new Set();this.current=new Map();this.active=null;this.enabled=true;
+      this.seen=new Set();this.current=new Map();this.active=null;this.enabled=false;
     }
     cancel(reason='stopped') {
       const active=this.active;this.epoch++;this.active=null;this.queue=[];
       if(active?.playing)this.stop();
-      if(active)this.status({state:reason,agent:active.agent,messageId:active.message.id});
+      if(active)this.report(active,{state:reason});
     }
-    sync({agent,sessionId,ready,enabled=true,hydrate=false},messages=[]) {
+    report(job,info) {
+      this.status({agent:job.agent,sessionId:job.sessionId,messageId:job.message.id,playbackId:job.playbackId,source:'synthesis',startedAt:job.startedAt,elapsedMs:Math.max(0,this.now()-(job.startedAt||this.now())),automatic:job.automatic,...info});
+    }
+    sync({agent,sessionId,ready,enabled=false,hydrate=false},messages=[]) {
       const scope=agent+':'+sessionId;
       if(scope!==this.scope || ready!==this.ready || enabled!==this.enabled) {
         this.cancel(ready?'stopped':'unavailable');this.scope=scope;this.ready=ready;
@@ -49,18 +52,18 @@
       if(this.active||!this.ready||!this.queue.length)return;
       const job=this.queue.shift(),token=this.epoch;
       if(!this.valid(job)){this.pump();return;}
-      job.playbackId='speech_'+this.id();this.active=job;
-      this.status({state:'preparing',agent:job.agent,messageId:job.message.id,automatic:job.automatic});
+      job.playbackId='speech_'+this.id();job.startedAt=this.now();this.active=job;
+      this.report(job,{state:'preparing'});
       try {
         const asset=await this.prepare({agent:job.agent,sessionId:job.sessionId,messageId:job.message.id});
         if(token!==this.epoch||this.active!==job||!this.valid(job))return;
         if(asset?.agent!==job.agent||asset.sessionId!==job.sessionId||asset.messageId!==job.message.id||
           !/^\/v1\/speech\/[a-f0-9]{64}$/.test(asset.path??''))throw Error('Voice asset identity did not match this reply.');
-        job.playing=true;this.status({state:'loading',agent:job.agent,messageId:job.message.id,playbackId:job.playbackId});
+        job.playing=true;this.report(job,{state:'loading'});
         if(this.play(asset.path,job.playbackId)===false)throw Error('Android playback is unavailable.');
       } catch(error) {
         if(token!==this.epoch||this.active!==job)return;
-        this.active=null;this.status({state:'error',agent:job.agent,messageId:job.message.id,error:error.message});this.pump();
+        this.active=null;this.report(job,{state:'error',error:error.message});this.pump();
       }
     }
     valid(job) {
@@ -70,7 +73,7 @@
     }
     playback(info) {
       const job=this.active;if(!job||info?.id!==job.playbackId)return false;
-      this.status({...info,agent:job.agent,messageId:job.message.id});
+      this.report(job,info);
       if(info.state==='ended'||info.state==='error'){this.active=null;this.pump();}
       else if(info.state==='stopped'){this.cancel();}
       return true;

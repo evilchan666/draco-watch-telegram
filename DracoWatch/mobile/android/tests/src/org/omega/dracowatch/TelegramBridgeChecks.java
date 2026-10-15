@@ -147,8 +147,8 @@ public final class TelegramBridgeChecks extends Instrumentation {
         js("(()=>{const actual=window.DracoNative;window.bridgeChecks={renderCount:0,calls:[],actions:[],actualRender:typeof actual.renderTelegram==='function'};"
             + "window.DracoNative={renderTelegram(value){bridgeChecks.renderCount++;actual.renderTelegram(value);},notifyTelegram(){},"
             + "refresh(agent){bridgeChecks.calls.push({method:'REFRESH',agent});},"
-            + "request(id,method,path,body){bridgeChecks.calls.push({method,path,body});setTimeout(()=>{const agent=new URL('https://fixture.invalid'+path).searchParams.get('agent');onDracoResponse({id,ok:true,status:200,data:{agent,sessionId:'bridge-physical-'+agent,send:false,queue:false,steer:false,strictSteer:false,abort:false,reply:false,speech:false,attachments:false,commands:[]}});},0);},"
-            + "stopMedia(){bridgeChecks.calls.push({method:'STOP-MEDIA'});},playMedia(){bridgeChecks.calls.push({method:'PLAY-MEDIA'});},setPlaybackRate(){},hideKeyboard(){actual.hideKeyboard();}};"
+            + "request(id,method,path,body){bridgeChecks.calls.push({method,path,body});setTimeout(()=>{const agent=new URL('https://fixture.invalid'+path).searchParams.get('agent');let data={agent,sessionId:'bridge-physical-'+agent,send:false,queue:false,steer:false,strictSteer:false,abort:false,reply:false,speech:false,attachments:false,commands:[]};if(method==='GET'&&bridgeChecks.ownerPath&&path===bridgeChecks.ownerPath+'&offset=0&limit=32768&revealCredentials=false'){const {url,revision,...identity}=bridgeChecks.ownerRef;data={schema:'draco.owner-work-detail.v1',identity,revision,text:bridgeChecks.ownerText,offset:0,nextOffset:null,totalChars:bridgeChecks.ownerText.length,complete:true,credentialMode:'masked',sourceTruncated:false};}onDracoResponse({id,ok:true,status:200,data});},0);},"
+            + "stopMedia(){bridgeChecks.calls.push({method:'STOP-MEDIA'});},playMedia(){bridgeChecks.calls.push({method:'PLAY-MEDIA'});},setPlaybackRate(){},hideKeyboard(){actual.hideKeyboard();},nativeDiagnostics(){return actual.nativeDiagnostics();},recordDiagnostic(value){actual.recordDiagnostic(value);}};"
             + "const handler=window.onDracoTelegramAction;window.onDracoTelegramAction=event=>{bridgeChecks.actions.push(JSON.parse(JSON.stringify(event)));return handler(event);};"
             + "window.bridgeFixture=()=>{const ids=['main','forge','atlas','aera-new','vvv','daedalus'],now=Date.now(),message={id:" + JSONObject.quote(MESSAGE) + ",agent:'atlas',sessionId:'" + SESSION + "',role:'assistant',text:" + JSONObject.quote(PUBLIC_TEXT) + ",timestamp:now-1000,kind:'Public report',publicAttested:true,source:'authenticated-native-history',media:[]};"
             + "return {version:2,connected:true,lastSuccess:now,capturedAt:now,selectedAgent:'atlas',agents:ids.map(id=>({id,status:id==='atlas'?'active':'idle',sessionId:'bridge-physical-'+id,sessionKey:'bridge:'+id,capabilities:{send:false,queue:false,steer:false,abort:false},controlTargets:[]})),conversation:[message,{id:'bridge-private-denied',agent:'atlas',sessionId:'" + SESSION + "',role:'assistant',text:'PRIVATE MUST NEVER REACH NATIVE',timestamp:now,publicAttested:false,source:'private-peer'}],historyState:{status:'complete'},historyHasMore:false,fleetCoverage:ids.map(agent=>({agent,available:true,status:'recorded-window'})),fleetActivity:[message],workActivity:[]};};"
@@ -157,7 +157,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
     }
     private void assertBoundary(String label) throws Exception {
         jsCheck("bridgeChecks.actualRender&&bridgeChecks.renderCount>0", label + " uses real Java renderTelegram, not a substitute native renderer");
-        jsCheck("bridgeChecks.calls.every(c=>c.method==='REFRESH'||c.method==='STOP-MEDIA'||c.method==='GET'&&c.path.startsWith('/v1/capabilities?'))", label + " performed no POST, audio playback, synthesis or agent input");
+        jsCheck("bridgeChecks.calls.every(c=>c.method==='REFRESH'||c.method==='STOP-MEDIA'||c.method==='GET'&&(c.path.startsWith('/v1/capabilities?')||c.path==='/v1/diagnostics'||bridgeChecks.ownerPath&&c.path===bridgeChecks.ownerPath+'&offset=0&limit=32768&revealCredentials=false')||c.method==='POST'&&c.path==='/v1/diagnostics'&&(()=>{const b=JSON.parse(c.body);return Array.isArray(b.events)&&b.events.length<=20&&b.events.every(e=>!('body'in e)&&!('token'in e)&&!('query'in e));})())", label + " performed only exact synthetic owner-detail/capability reads and metadata diagnostics, no message/control POST, audio playback or synthesis");
         check(field("profile").get(activity) == null, label + " remains unpaired with no production credentials");
     }
     private void screenshot(String name) throws Exception {
@@ -172,7 +172,8 @@ public final class TelegramBridgeChecks extends Instrumentation {
     }
     private void executionPreviewCase() throws Exception {
         js("(()=>{const x=bridgeFixture(),now=Date.now(),scope={agent:'atlas',sessionId:'"+SESSION+"',sessionKey:'bridge:atlas',runId:'bridge-execution-run',callId:'bridge-execution-call'};"
-            +"x.workActivity=[{...scope,id:'bridge-execution-card',role:'assistant',kind:'Tool finished',text:'Observed shell command result',timestamp:now,source:'authenticated-tool-status',publicAttested:true,evidenceRevision:'8'.repeat(64),evidenceSource:{kind:'recorded-history',sequence:9,projectionRevision:1,observedAt:now,freshUntil:now+15000},observation:{...scope,version:1,tool:'exec_command',toolName:'functions.exec_command',phase:'result',redacted:true,command:{program:'rg',operation:'search',flags:['-n'],targets:['mobile/ui/app.js'],preview:'rg -n \"steer|chat.abort\" mobile/ui/app.js'},result:{exitCode:2,summary:'Safe observed output: command inspected Stop and Steer controls.'},privateModelContext:'PRIVATE_EXECUTION_CONTEXT_MUST_NOT_RENDER',gaps:[]}}];onDracoSnapshot(x);DracoWatch.select('atlas');return true;})()");
+            +"const detailRef={...scope,recordId:'record:bridge-execution-source',revision:'8'.repeat(64)};detailRef.url='/v1/work/detail?'+new URLSearchParams(detailRef).toString();bridgeChecks.ownerRef=detailRef;bridgeChecks.ownerPath=detailRef.url;bridgeChecks.ownerText=JSON.stringify({toolName:'functions.exec_command',phase:'result',input:{cmd:'synthetic exact command'},result:{exitCode:2,output:'EXACT_SYNTHETIC_OWNER_RECORD'}},null,2);"
+            +"x.workActivity=[{...scope,id:'bridge-execution-card',role:'assistant',kind:'Tool finished',text:'Observed shell command result',timestamp:now,source:'authenticated-tool-status',publicAttested:true,evidenceRevision:'8'.repeat(64),detailRef,evidenceSource:{kind:'recorded-history',sequence:9,projectionRevision:1,observedAt:now,freshUntil:now+15000},observation:{...scope,version:1,tool:'exec_command',toolName:'functions.exec_command',phase:'result',redacted:true,command:{program:'rg',operation:'search',flags:['-n'],targets:['mobile/ui/app.js'],preview:'rg -n \"steer|chat.abort\" mobile/ui/app.js'},result:{exitCode:2,summary:'Safe observed output: command inspected Stop and Steer controls.'},privateModelContext:'PRIVATE_EXECUTION_CONTEXT_MUST_NOT_RENDER',gaps:[]}}];onDracoSnapshot(x);DracoWatch.select('atlas');return true;})()");
         waitShowing(true);waitRows("$ rg -n");
         String text=rowsText();
         check(text.contains("$ rg -n \"steer|chat.abort\" mobile/ui/app.js")&&text.contains("Exit 2")
@@ -182,6 +183,17 @@ public final class TelegramBridgeChecks extends Instrumentation {
             "actual inline execution does not require provenance expansion and never renders private context");
         revealRowControl("telegram-expand-bridge-execution-card");
         screenshot("integrated-execution-inline");
+        int ownerCallsBefore=Integer.parseInt(js("bridgeChecks.calls.filter(c=>c.path&&c.path.startsWith('/v1/work/detail?')).length"));
+        js("onDracoTelegramAction({action:'ownerDetail',data:{id:'bridge-execution-card',agent:'atlas',sessionId:'WRONG-OWNER-SESSION',revision:'8'.repeat(64)}})");
+        jsCheck("!document.getElementById('owner-record-dialog').open&&bridgeChecks.calls.filter(c=>c.path&&c.path.startsWith('/v1/work/detail?')).length==="+ownerCallsBefore,"stale physical-session Recorded detail action cannot fetch or open another owner record");
+        click(revealRowControl("telegram-owner-detail-bridge-execution-card"));
+        waitShowing(false);waitJs("document.getElementById('owner-record-dialog').open&&document.getElementById('owner-record-content').textContent.includes('EXACT_SYNTHETIC_OWNER_RECORD')");
+        jsCheck("bridgeChecks.actions.some(e=>e.action==='ownerDetail'&&e.data.agent==='atlas'&&e.data.sessionId==='"+SESSION+"'&&e.data.id==='bridge-execution-card'&&e.data.revision==='8'.repeat(64))","actual native Recorded detail action retains exact owner physical session event and revision");
+        jsCheck("bridgeChecks.calls.filter(c=>c.path&&c.path.startsWith('/v1/work/detail?')).length==="+(ownerCallsBefore+1)+"&&document.getElementById('owner-record-content').textContent===bridgeChecks.ownerText","explicit native Recorded detail fetch opens the complete exact synthetic retained payload, not its compact preview");
+        String encodedOwnerPath=js("bridgeChecks.calls.find(c=>c.path&&c.path.startsWith('/v1/work/detail?')).path");
+        String exactOwnerPath=new JSONArray("["+encodedOwnerPath+"]").getString(0);
+        check(DracoClient.permitted("GET",exactOwnerPath),"actual owner-detail route emitted by JavaScript is admitted by the native exact-query guard");
+        js("document.getElementById('owner-record-close').click()");waitShowing(true);
     }
     private void publicProgressCase() throws Exception {
         js("(()=>{const x=bridgeFixture(),now=Date.now(),scope={agent:'atlas',sessionId:'"+SESSION+"',sessionKey:'bridge:atlas',runId:'bridge-owned-run',callId:'bridge-progress-call'};"
@@ -276,6 +288,26 @@ public final class TelegramBridgeChecks extends Instrumentation {
             check(ui(() -> ((TextView) requireTag("telegram-title")).getText().toString()).equals("ATLAS"), "snapshot routes to exact selected agent in actual native header");
             check(rowsText().contains(PUBLIC_TEXT) && !rowsText().contains("PRIVATE MUST NEVER"), "real JS projection admits public exact-session text and excludes private rows");
             jsCheck("bridgeFixture().agents.length===6", "synthetic snapshot retains all six agents");
+            check(ui(()->requireTag("telegram-audio-player").getVisibility())==View.GONE,"actual app projection opens native chat without an idle audio toolbar");
+            jsCheck("JSON.parse(localStorage.getItem('"+CACHE+"')).preferences.automaticSpeech===false", "actual retained app speech preference remains explicit manual-first");
+            int originalTextZoom=ui(()->web.getSettings().getTextZoom());
+            double originalRootFont=Double.parseDouble(js("parseFloat(getComputedStyle(document.documentElement).fontSize)"));
+            click(requireTag("telegram-nav-settings"));waitShowing(false);
+            waitJs("!document.getElementById('view-settings').hidden");
+            double settingsRootFont=Double.parseDouble(js("parseFloat(getComputedStyle(document.documentElement).fontSize)"));
+            int settingsTextZoom=ui(()->web.getSettings().getTextZoom());
+            double expectedRootFont=16d*originalTextZoom/100d;
+            String fontEvidence="before="+originalRootFont+"px after="+settingsRootFont+"px zoom="+originalTextZoom+"→"+settingsTextZoom+" system="+activity.getResources().getConfiguration().fontScale+" expected="+expectedRootFont+"px";
+            android.util.Log.i("DracoTelegramBridge","SETTINGS_TYPOGRAPHY "+fontEvidence);
+            jsCheck("JSON.parse(localStorage.getItem('"+CACHE+"')).preferences.scale===100", "opening Settings preserves saved 100 percent app scale");
+            check(Math.abs(originalRootFont-expectedRootFont)<.15&&Math.abs(settingsRootFont-expectedRootFont)<.15&&Math.abs(originalRootFont-settingsRootFont)<.1,"native-to-Settings typography applies the 16px base and system zoom exactly once: "+fontEvidence);
+            check(settingsTextZoom==originalTextZoom,"Settings navigation does not reapply or multiply native WebView font zoom: "+fontEvidence);
+            js("DracoWatch.select('atlas')");waitShowing(true);waitRows(PUBLIC_TEXT);
+            check(ui(()->requireTag("telegram-audio-player").getVisibility())==View.GONE,"return from Settings remains silent with no idle player");
+            click(requireTag("telegram-options"));dialogChoice("Diagnostics");waitShowing(false);waitJs("document.getElementById('debug-dialog').open");
+            jsCheck("JSON.parse(DracoNative.nativeDiagnostics()).schema==='draco.native-diagnostics.v1'", "actual bridge exposes bounded native journal to explicit Debug view");
+            check(!field("localWebInspection").getBoolean(activity),"opening Debug view does not silently enable local WebView inspection");
+            js("document.getElementById('debug-close').click()");waitShowing(true);
 
             EditText draft = (EditText) requireTag("telegram-draft");
             ui(() -> { draft.setText(DRAFT); return null; });

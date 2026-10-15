@@ -31,6 +31,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -51,6 +52,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
 import java.util.TimeZone;
@@ -110,6 +112,11 @@ public final class TelegramSurface extends FrameLayout {
     private final TextView voice;
     private final Button speed;
     private final Button stopAudio;
+    private final Button pauseAudio;
+    private final TextView audioTime;
+    private final SeekBar audioSeek;
+    private final LinearLayout audioPanel;
+    private final Button activityFilter;
     private final ListView list;
     private final SurfaceAdapter adapter;
     private final TextView jump;
@@ -147,6 +154,12 @@ public final class TelegramSurface extends FrameLayout {
     private String lastFocusMessage = "";
     private boolean compactLayout;
     private boolean shortLayout;
+    private final Set<String> seenTimelineKeys = new LinkedHashSet<>();
+    private long timelineNewestTime;
+    private int unreadTimeline;
+    private boolean replacingRows;
+    private boolean followLive = true;
+    private boolean seekingAudio;
 
     public TelegramSurface(Context context, Actions actions) {
         super(context);
@@ -262,11 +275,15 @@ public final class TelegramSurface extends FrameLayout {
         adapter = new SurfaceAdapter();
         list.setAdapter(adapter);
         list.setOnScrollListener(new AbsListView.OnScrollListener() {
-            @Override public void onScrollStateChanged(AbsListView view, int state) { }
+            @Override public void onScrollStateChanged(AbsListView view, int state) {
+                if (state == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) followLive = listAtEnd;
+            }
             @Override public void onScroll(AbsListView view, int first, int count, int total) {
                 View last = list.getChildAt(count - 1);
                 listAtEnd = total == 0 || first + count >= total
                     && (last == null || last.getBottom() <= list.getHeight() - list.getPaddingBottom() + dp(8));
+                if (!replacingRows && listAtEnd) { followLive = true; unreadTimeline = 0; }
+                else if (!replacingRows) followLive = false;
                 updateJump();
             }
         });
@@ -285,6 +302,11 @@ public final class TelegramSurface extends FrameLayout {
         jumpParams.setMargins(dp(8), dp(8), dp(10), dp(8));
         body.addView(jump, jumpParams);
 
+        activityFilter = button("All agents · live", "Filter the activity timeline");
+        activityFilter.setTag("telegram-activity-filter");
+        activityFilter.setOnClickListener(v -> showActivityFilter());
+        shell.addView(activityFilter, new LinearLayout.LayoutParams(-1, dp(44)));
+
         voiceBar = horizontal();
         voiceBar.setTag("telegram-voice-controls");
         voiceBar.setBackgroundColor(PANEL);
@@ -301,12 +323,51 @@ public final class TelegramSurface extends FrameLayout {
         speed.setMinimumWidth(dp(42));
         speed.setOnClickListener(v -> showRates());
         voiceBar.addView(speed, new LinearLayout.LayoutParams(-2, -2));
+        pauseAudio = button("Pause", "Pause or resume this exact audio report");
+        pauseAudio.setTag("telegram-pause-audio");
+        pauseAudio.setOnClickListener(v -> {
+            JSONObject audio = currentAudio();
+            if (audio == null) return;
+            emit("paused".equals(audio.optString("state")) ? "audioResume" : "audioPause", data("playbackId", audio.optString("id")));
+        });
+        voiceBar.addView(pauseAudio, new LinearLayout.LayoutParams(-2, -2));
         stopAudio = button("Stop audio", "Stop audio immediately");
         stopAudio.setTag("telegram-stop-audio");
         icon(stopAudio, "stop", TEXT);
         stopAudio.setOnClickListener(v -> emit("stopAudio"));
         voiceBar.addView(stopAudio, new LinearLayout.LayoutParams(-2, -2));
-        shell.addView(voiceBar, new LinearLayout.LayoutParams(-1, -2));
+        audioPanel = vertical();
+        audioPanel.setTag("telegram-audio-player");
+        audioPanel.addView(voiceBar, new LinearLayout.LayoutParams(-1, -2));
+        LinearLayout seekRow = horizontal();
+        audioTime = text(12, SECONDARY, false);
+        audioTime.setTag("telegram-audio-time");
+        audioTime.setPadding(dp(8), 0, dp(5), 0);
+        seekRow.addView(audioTime, new LinearLayout.LayoutParams(-2, dp(40)));
+        audioSeek = new SeekBar(context);
+        audioSeek.setTag("telegram-audio-seek");
+        audioSeek.setMax(1000);
+        audioSeek.setContentDescription("Seek within this exact audio report");
+        audioSeek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            String id, expectedIdentity; long duration;
+            public void onProgressChanged(SeekBar bar, int progress, boolean user) { }
+            public void onStartTrackingTouch(SeekBar bar) {
+                JSONObject audio = currentAudio(); seekingAudio = true;
+                id = audio == null ? "" : audio.optString("id");
+                duration = audio == null ? 0 : audio.optLong("durationMs"); expectedIdentity = identity;
+            }
+            public void onStopTrackingTouch(SeekBar bar) {
+                seekingAudio = false; JSONObject audio = currentAudio();
+                if (audio != null && identity.equals(expectedIdentity) && id.equals(audio.optString("id")) && duration > 0 && audio.optBoolean("canSeek")) {
+                    JSONObject value = data("playbackId", id);
+                    try { value.put("positionMs", Math.round(duration * bar.getProgress() / 1000.0)); } catch (JSONException ignored) { }
+                    emit("audioSeek", value);
+                }
+            }
+        });
+        seekRow.addView(audioSeek, new LinearLayout.LayoutParams(0, dp(40), 1));
+        audioPanel.addView(seekRow, new LinearLayout.LayoutParams(-1, -2));
+        shell.addView(audioPanel, new LinearLayout.LayoutParams(-1, -2));
 
         compose = vertical();
         compose.setTag("telegram-composer");
@@ -439,7 +500,7 @@ public final class TelegramSurface extends FrameLayout {
 
         boolean nextChat = value.optBoolean("chat");
         String nextView = value.optString("view", "chats");
-        String nextIdentity = nextView + ":" + nextChat + ":" + value.optString("agent") + ":"
+        String nextIdentity = nextView + ":" + nextChat + ":" + ("activity".equals(nextView) ? value.optString("activityFilter", "all") + ":" + value.optString("activityMode", "live") + ":" : "") + value.optString("agent") + ":"
             + value.optString("sessionKey") + ":" + value.optString("sessionId");
         boolean changedConversation = !nextIdentity.equals(identity);
         if (changedConversation) {
@@ -453,6 +514,8 @@ public final class TelegramSurface extends FrameLayout {
             selectedSendMode = "send";
             lastFocusMessage = "";
             listAtEnd = true;
+            followLive = true;
+            seenTimelineKeys.clear(); unreadTimeline = 0; timelineNewestTime = 0;
         }
         String currentModeRunId = value.optString("controlRunId");
         if (!modeRunId.equals(currentModeRunId)) {
@@ -505,7 +568,8 @@ public final class TelegramSurface extends FrameLayout {
         String signature = payload.optString("name") + payload.optString("status") + payload.optBoolean("live")
             + payload.optString("historyNote") + payload.optString("workSummary") + payload.optString("voiceStatus")
             + payload.optDouble("playbackRate", 1) + payload.optString("replyLabel") + payload.optString("color") + selectedSendMode
-            + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins")) + compactLayout + shortLayout + payload.optBoolean("recording");
+            + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins")) + compactLayout + shortLayout + payload.optBoolean("recording")
+            + String.valueOf(payload.optJSONObject("audio")) + payload.optString("activityFilter") + payload.optString("activityMode");
         if (!signature.equals(chromeSignature)) {
             chromeSignature = signature;
             placePinBanner();
@@ -537,23 +601,16 @@ public final class TelegramSurface extends FrameLayout {
             subtitle.setContentDescription(live + " · " + state + ". Tap for complete state and coverage.");
             subtitle.setVisibility(shortLayout ? GONE : VISIBLE);
             subtitle.setTextColor(payload.optBoolean("live") ? SECONDARY : WARNING);
-            if (compactLayout) {
-                setOptional(work, shortLayout ? "" : "Work & coverage  ›");
-                history.setVisibility(GONE);
-                work.setContentDescription(payload.optString("workSummary") + ". " + payload.optString("historyNote") + ". Tap for complete work and coverage details.");
-            } else {
-                setOptional(work, payload.optString("workSummary"));
-                work.setMaxLines(1);
-                setOptional(history, payload.optString("historyNote"));
-                history.setMaxLines(1);
-                history.setEllipsize(TextUtils.TruncateAt.END);
-                work.setContentDescription("Current work summary. Open complete work and coverage details.");
-            }
-            voiceBar.setVisibility(chat ? VISIBLE : GONE);
+            setOptional(work, chat && !shortLayout ? "Work & coverage  ›" : "");
+            work.setMaxLines(1);
+            history.setVisibility(GONE);
+            work.setContentDescription(payload.optString("workSummary") + ". " + payload.optString("historyNote") + ". Tap for complete work and coverage details.");
+            activityFilter.setVisibility("activity".equals(viewName) ? VISIBLE : GONE);
+            activityFilter.setText(("all".equals(payload.optString("activityFilter", "all")) ? "All agents" : payload.optString("activityFilter")) + " · " + payload.optString("activityMode", "live") + "  ▾");
+            updateAudio();
             String voiceState = payload.optString("voiceStatus");
             String fullVoiceState = voiceState.isEmpty() ? "Voice status unavailable · text remains readable" : voiceState;
-            setText(voice, shortLayout ? "Audio" : compactLayout ? fullVoiceState.split("·", 2)[0].trim() : fullVoiceState);
-            voice.setContentDescription(fullVoiceState + ". Tap for full playback state.");
+            if (currentAudio() == null) setText(voice, fullVoiceState);
             speed.setText(rateLabel(payload.optDouble("playbackRate", 1)));
             setOptional(reply, payload.optString("replyLabel"));
             replyTop.setVisibility(payload.optString("replyLabel").isEmpty() ? GONE : VISIBLE);
@@ -654,7 +711,7 @@ public final class TelegramSurface extends FrameLayout {
         View top = list.getChildAt(0);
         int offset = top == null ? 0 : top.getTop();
         String anchor = first < adapter.rows.size() ? adapter.rows.get(first).key : "";
-        boolean follow = changedConversation || listAtEnd;
+        boolean follow = changedConversation || followLive;
         ArrayList<Row> rows = new ArrayList<>();
         if (content != null) for (int i = 0; i < content.length(); i++) {
             JSONObject item = content.optJSONObject(i);
@@ -673,7 +730,7 @@ public final class TelegramSurface extends FrameLayout {
             if (event == null) continue;
             rows.add(new Row(activityKey(event, event.optString("id", "work-" + i)), "activity", event));
         }
-        if (chat) {
+        if (chat || "activity".equals(viewName)) {
             Collections.sort(rows, Comparator.comparingLong(row -> orderTime(row.value.opt("timestamp"))));
             rows = withDayDividers(rows);
         }
@@ -684,6 +741,15 @@ public final class TelegramSurface extends FrameLayout {
             rows.add(new Row("empty", "empty", data("text", note)));
         }
         if (chat) rows.add(0, new Row("older", "older", new JSONObject()));
+        for (Row row : rows) {
+            if ("day".equals(row.type) || "older".equals(row.type) || "empty".equals(row.type)) continue;
+            long observedTime = orderTime(row.value.opt("timestamp"));
+            if (!changedConversation && !follow && observedTime > 0 && observedTime >= timelineNewestTime && !seenTimelineKeys.contains(row.key)) unreadTimeline++;
+            seenTimelineKeys.add(row.key);
+        }
+        for (Row row : rows) timelineNewestTime = Math.max(timelineNewestTime, orderTime(row.value.opt("timestamp")));
+        while (seenTimelineKeys.size() > 4096) seenTimelineKeys.remove(seenTimelineKeys.iterator().next());
+        replacingRows = true;
         adapter.rows.clear();
         adapter.rows.addAll(rows);
         HashSet<String> presentRevisions = new HashSet<>();
@@ -691,14 +757,15 @@ public final class TelegramSurface extends FrameLayout {
         expanded.retainAll(presentRevisions);
         adapter.notifyDataSetChanged();
         final String expectedIdentity = identity;
-        if (chat && follow) list.post(() -> { if (identity.equals(expectedIdentity)) jumpToLatest(); });
+        if ((chat || "activity".equals(viewName)) && follow) list.post(() -> { if (identity.equals(expectedIdentity)) { jumpToLatest(); replacingRows = false; } });
         else if (!changedConversation && !anchor.isEmpty()) {
             for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(anchor)) {
                 final int position = i;
-                list.post(() -> { if (identity.equals(expectedIdentity)) list.setSelectionFromTop(position, offset); });
+                list.post(() -> { if (identity.equals(expectedIdentity)) { list.setSelectionFromTop(position, offset); replacingRows = false; updateJump(); } });
                 break;
             }
-        } else if (changedConversation) list.setSelection(0);
+            list.post(() -> { if (identity.equals(expectedIdentity)) replacingRows = false; });
+        } else { if (changedConversation) list.setSelection(0); replacingRows = false; }
     }
 
     /** Dates organize this conversation only; they never become messages or actions. */
@@ -847,8 +914,68 @@ public final class TelegramSurface extends FrameLayout {
         option(labels, commands, "Operational evidence and coverage", () -> emit("details"));
         option(labels, commands, "Audio speed", this::showRates);
         option(labels, commands, "Stop audio", () -> emit("stopAudio"));
+        option(labels, commands, "Diagnostics", () -> emit("diagnostics"));
+        option(labels, commands, "Export diagnostics", () -> emit("exportDiagnostics"));
+        option(labels, commands, "Local WebView inspection…", () -> emit("localInspect"));
         new AlertDialog.Builder(getContext()).setTitle(chat ? payload.optString("name", "Conversation") : "Watch options")
             .setItems(labels.toArray(new String[0]), (dialog, which) -> commands.get(which).run()).show();
+    }
+
+    private JSONObject currentAudio() {
+        JSONObject audio = payload.optJSONObject("audio");
+        if (audio == null || audio.optString("id").isEmpty()
+            || !payload.optString("agent").equals(audio.optString("agent"))
+            || !payload.optString("sessionId").equals(audio.optString("sessionId"))) return null;
+        return audio;
+    }
+
+    private void updateAudio() {
+        JSONObject audio = currentAudio();
+        String state = audio == null ? "idle" : audio.optString("state", "idle");
+        boolean present = chat && audio != null && !state.isEmpty() && !"idle".equals(state)
+            && !"stopped".equals(state) && !"ended".equals(state);
+        audioPanel.setVisibility(present ? VISIBLE : GONE);
+        if (!present) return;
+        String label = audio.optString("label", "Report audio");
+        String source = "recording".equals(audio.optString("source")) ? "Recording" : "Read aloud";
+        String progress = "";
+        Object supplied = audio.opt("progress");
+        if (supplied instanceof Number) progress = " · " + Math.max(0, Math.min(100, ((Number)supplied).intValue())) + "%";
+        else if (supplied instanceof JSONObject) progress = " · " + Math.max(0, Math.min(100, ((JSONObject)supplied).optInt("percent"))) + "%";
+        String report = audio.optString("messageId");
+        String reportLabel = report.length() > 16 ? report.substring(report.length() - 16) : report;
+        voice.setText(source + " · " + label + " · " + reportLabel + " · " + state + progress
+            + ("preparing".equals(state) || "loading".equals(state) || "downloading".equals(state) ? " · " + clock(audio.optLong("elapsedMs")) + " elapsed" : ""));
+        voice.setContentDescription(source + ". " + label + ". " + state + ". Exact report " + audio.optString("messageId"));
+        pauseAudio.setText("paused".equals(state) ? "Resume" : "Pause");
+        pauseAudio.setEnabled(audio.optBoolean("canPause") && ("paused".equals(state) || "playing".equals(state)));
+        long duration = Math.max(0, audio.optLong("durationMs"));
+        long position = Math.max(0, Math.min(duration, audio.optLong("positionMs")));
+        audioTime.setText(clock(position) + " / " + (duration > 0 ? clock(duration) : "–:––"));
+        audioSeek.setEnabled(audio.optBoolean("canSeek") && duration > 0);
+        if (!seekingAudio) audioSeek.setProgress(duration > 0 ? (int)(position * 1000 / duration) : 0);
+    }
+
+    private static String clock(long millis) {
+        long seconds = Math.max(0, millis / 1000);
+        return String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private void showActivityFilter() {
+        if (!"activity".equals(viewName)) return;
+        String[] ids = {"all", "main", "forge", "atlas", "aera-new", "vvv", "daedalus"};
+        String[] labels = {"All agents", "Commander", "FORGE", "ATLAS", "Æra", "VVV", "Daedalus"};
+        final String expectedIdentity = identity;
+        new AlertDialog.Builder(getContext()).setTitle("Activity agent")
+            .setItems(labels, (dialog, which) -> {
+                if (identity.equals(expectedIdentity)) emit("activityFilter", data("agent", ids[which]));
+            }).setNeutralButton("Timeline mode", (dialog, which) -> {
+                if (!identity.equals(expectedIdentity)) return;
+                new AlertDialog.Builder(getContext()).setTitle("Activity mode")
+                    .setItems(new String[]{"Live", "Work details"}, (choice, index) -> {
+                        if (identity.equals(expectedIdentity)) emit("activityMode", data("mode", index == 0 ? "live" : "work"));
+                    }).show();
+            }).setNegativeButton("Close", null).show();
     }
 
     private void showWorkCoverage() {
@@ -1037,6 +1164,7 @@ public final class TelegramSurface extends FrameLayout {
         if (adapter.rows.isEmpty()) return;
         list.setSelection(adapter.rows.size() - 1);
         listAtEnd = true;
+        followLive = true; unreadTimeline = 0;
         updateJump();
     }
 
@@ -1044,6 +1172,7 @@ public final class TelegramSurface extends FrameLayout {
         // ListView invokes its scroll listener immediately when registered,
         // before the constructor has created the overlay control.
         if (jump == null) return;
+        jump.setText("activity".equals(viewName) ? "↓ Resume live" + (unreadTimeline > 0 ? " · " + unreadTimeline + " new" : "") : "↓ Latest" + (unreadTimeline > 0 ? " · " + unreadTimeline + " new" : ""));
         jump.setVisibility(showing() && (chat || "activity".equals(viewName)) && !listAtEnd ? VISIBLE : GONE);
     }
 
@@ -1162,9 +1291,11 @@ public final class TelegramSurface extends FrameLayout {
         bubble.addView(author);
 
         String fullText = message.optString("text");
+        String missingText = message.optString("deliveryDiagnosis");
+        if (missingText.isEmpty()) missingText = "Readable report text unavailable. An attachment does not prove a companion text reply.";
         TextView content = text(16, TEXT, false);
         content.setText(fullText.isEmpty() ? local ? message.optString("attachmentNote", "Attachment submission · contents not attested")
-            : "Readable report text unavailable. An attachment does not prove a companion text reply." : fullText);
+            : missingText : fullText);
         content.setTextColor(fullText.isEmpty() && !local ? WARNING : TEXT);
         content.setTextIsSelectable(true);
         content.setPadding(0, dp(4), 0, dp(5));
@@ -1215,12 +1346,6 @@ public final class TelegramSurface extends FrameLayout {
             Button linked = button("Show linked text", "Navigate to independently readable linked message");
             linked.setOnClickListener(v -> { if (sameScope(origin)) withScope(origin, () -> gotoMessage(replyTo)); });
             bubble.addView(linked);
-        }
-        if (!local && message.optBoolean("canRead")) {
-            Button read = button("Read aloud", "Deliberately read this exact public message in its agent's approved voice");
-            read.setTag("telegram-read-" + message.optString("id"));
-            read.setOnClickListener(v -> emitMessage("read", message, origin));
-            bubble.addView(read);
         }
         String delivery = local ? "" : delivery(message.opt("delivery"));
         if (!delivery.isEmpty()) {
@@ -1309,7 +1434,11 @@ public final class TelegramSurface extends FrameLayout {
             toggle.setOnClickListener(v -> {
                 if (expanded.contains(expansionKey)) expanded.remove(expansionKey);
                 else expanded.add(expansionKey);
+                int first = list.getFirstVisiblePosition(); View top = list.getChildAt(0);
+                int offset = top == null ? 0 : top.getTop(); final String expectedIdentity = identity;
+                replacingRows = true; followLive = false;
                 adapter.notifyDataSetChanged();
+                list.post(() -> { if (identity.equals(expectedIdentity)) { list.setSelectionFromTop(first, offset); replacingRows = false; listAtEnd = false; updateJump(); } });
             });
             card.addView(toggle);
             if (expanded.contains(expansionKey)) {
@@ -1319,6 +1448,20 @@ public final class TelegramSurface extends FrameLayout {
                 evidence.setTag("telegram-evidence-" + event.optString("id"));
                 card.addView(evidence);
             }
+        }
+        if (event.optBoolean("ownerDetail") && !event.optBoolean("stale") && !revision.isEmpty()) {
+            final String expectedIdentity = identity;
+            Button owner = button("Full recorded operation", "Read this exact owner-bound operation and result, excluding private model reasoning");
+            owner.setTag("telegram-owner-detail-" + event.optString("id"));
+            owner.setOnClickListener(v -> {
+                if (!identity.equals(expectedIdentity) || !currentObservedRevision(row.key, expansionKey)) {
+                    toast("This exact observation changed. Refresh and reopen its recorded operation."); return;
+                }
+                JSONObject value = data("id", event.optString("id"));
+                try { value.put("agent", event.optString("agent")); value.put("sessionId", event.optString("sessionId")); value.put("revision", revision); } catch (JSONException ignored) { }
+                emit("ownerDetail", value);
+            });
+            card.addView(owner);
         }
         if (!chat && !event.optString("agent").isEmpty()) {
             Button open = button("Open agent chat", "Open this event's agent conversation before using chat-scoped controls");
@@ -1352,6 +1495,18 @@ public final class TelegramSurface extends FrameLayout {
         for (int i = 0; i < events.length(); i++) {
             JSONObject event = events.optJSONObject(i);
             if (event == null || !event.optBoolean("canPin")) continue;
+            String currentKey = activityKey(event, event.optString("id", "work-" + i));
+            if (key.equals(currentKey) && expectedRevision.equals(expansionKey(new Row(currentKey, "activity", event)))) return true;
+        }
+        return false;
+    }
+
+    private boolean currentObservedRevision(String key, String expectedRevision) {
+        JSONArray events = payload.optJSONArray(chat ? "work" : "activity");
+        if (events == null) return false;
+        for (int i = 0; i < events.length(); i++) {
+            JSONObject event = events.optJSONObject(i);
+            if (event == null || !event.optBoolean("ownerDetail") || event.optBoolean("stale")) continue;
             String currentKey = activityKey(event, event.optString("id", "work-" + i));
             if (key.equals(currentKey) && expectedRevision.equals(expansionKey(new Row(currentKey, "activity", event)))) return true;
         }
@@ -1403,9 +1558,11 @@ public final class TelegramSurface extends FrameLayout {
         JSONObject origin = actionScope == null ? scope() : actionScope;
         try {
             if ("openChat".equals(action)) data.put("sourceAgent", origin.optString("agent"));
-            else data.put("agent", origin.optString("agent"));
-            data.put("sessionKey", origin.optString("sessionKey"));
-            data.put("sessionId", origin.optString("sessionId"));
+            else if (!"activityFilter".equals(action) && !"ownerDetail".equals(action)) data.put("agent", origin.optString("agent"));
+            if (!"ownerDetail".equals(action)) {
+                data.put("sessionKey", origin.optString("sessionKey"));
+                data.put("sessionId", origin.optString("sessionId"));
+            }
             if ("stop".equals(action) || "send".equals(action) && "steer".equals(data.optString("mode"))) {
                 data.put("runId", origin.optString("runId"));
             }
