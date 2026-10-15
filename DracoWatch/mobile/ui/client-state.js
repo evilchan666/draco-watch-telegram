@@ -23,8 +23,24 @@
     const base={occupancy:live ? occupancyLabel(agent?.status) : 'Runtime unknown · stale/disconnected',conversation,
       execution:'Execution unknown',summary:'No exact-run execution evidence observed',event:null,target:null};
     if (!live) return {...base,summary:'Observation stale or disconnected; received history is retained'};
-    if (status === 'idle') return {...base,summary:'No open run in this conversation; agent-wide occupancy is separate'};
+    const hold=agent?.continuationHold;
+    const held=bound && statusId(hold?.id) && statusId(hold.sessionId) &&
+      (hold.currentSessionId === undefined ? hold.sessionId === agent.sessionId : hold.currentSessionId === agent.sessionId) &&
+      Number.isSafeInteger(hold.heldAt) && hold.heldAt > 0 && hold.heldAt <= now;
     const target=status === 'active' ? conversationTarget(agent) : null;
+    const p=agent?.runPhase;
+    const fresh=Number.isSafeInteger(p?.observedAt) && p.observedAt > 0 && p.observedAt <= now &&
+      Number.isSafeInteger(p.expiresAt) && p.expiresAt > now && p.expiresAt > p.observedAt;
+    const displayedTargets=(agent?.controlTargets || []).filter(t=>t?.scope === 'conversation' && t.agent === agent.id &&
+      t.sessionKey === agent.sessionKey && t.sessionId === agent.sessionId);
+    // Native phase carries its own current-owner proof. Incomplete control
+    // inventory cannot manufacture a cancellation target from that observation.
+    const owned=p?.phase === 'idle' ? status === 'idle' && !p.runId : status === 'active' && statusId(p?.runId) &&
+      (!displayedTargets.length || target && p.runId === target.runId);
+    const label=({working:'Working', 'tool-wait':'Waiting for tool', 'input-wait':'Waiting for input', blocked:'Blocked', idle:'Idle'})[p?.phase];
+    if (held) base.execution='Automatic continuation held';
+    else if (bound && fresh && owned && label) base.execution=label;
+    if (status === 'idle') return {...base,summary:'No open run in this conversation; agent-wide occupancy is separate'};
     if (!target) return {...base,summary:status === 'queued' ? 'Admission is not execution or waiting evidence' : 'Exact conversation run unavailable; execution unknown'};
     base.target=target;
     if (!coverage || coverage.available !== true || !Number.isFinite(coverage.freshUntil) || coverage.freshUntil <= now)
@@ -52,7 +68,7 @@
     const phase=event.observation.phase,tool=typeof event.observation.toolName === 'string' && /^[A-Za-z0-9_.]{1,160}$/.test(event.observation.toolName) ? event.observation.toolName : event.observation.tool;
     const fact=phase === 'start' ? 'Start observed · outcome not observed' : phase === 'error' ? 'Error observed' : 'Return observed';
     return {...base,event,summary:tool+' · '+fact+' · observed '+Math.floor((now-event.timestamp)/1000)+'s ago'+
-      (gap?' · partial/gapped window':'')+' · present execution unknown'};
+      (gap?' · partial/gapped window':'')+' · '+(base.execution === 'Execution unknown' ? 'present execution unknown' : base.execution)};
   }
   const PIN_LIMITS = Object.freeze({perSession:30,total:180,historyPerSession:60,historyTotal:240,text:2000,title:160,id:512,sessionId:256});
   const PIN_SCOPE = 'device-local';

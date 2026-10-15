@@ -205,7 +205,7 @@ public final class TelegramSurface extends FrameLayout {
         headingText.addView(subtitle);
         heading.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
 
-        runStop = button("Stop", "Stop the exact observed active run; unavailable controls dispatch nothing");
+        runStop = button("Abort run", "Abort the exact observed run; automatic continuation may remain possible");
         runStop.setTag("telegram-stop-run");
         runStop.setTextColor(WARNING);
         icon(runStop, "stop", WARNING);
@@ -593,6 +593,9 @@ public final class TelegramSurface extends FrameLayout {
             jump.setBackground(outline(PANEL_LIGHT, 24, chat ? color : SELECTED));
             backButton.setVisibility(chat || !"chats".equals(viewName) ? VISIBLE : GONE);
             runStop.setVisibility(chat ? VISIBLE : GONE);
+            boolean durableStop = capability("durableStop");
+            runStop.setText(durableStop ? "Stop & hold" : "Abort run");
+            runStop.setContentDescription(durableStop ? "Stop the exact run and hold automatic continuation until explicit release" : "Abort the exact run; automatic continuation may remain possible");
             runStop.setAlpha(capability("abort") ? 1 : .55f);
             backDrawable.setRotation(0, false);
             String state = payload.optString("status", "Status unavailable");
