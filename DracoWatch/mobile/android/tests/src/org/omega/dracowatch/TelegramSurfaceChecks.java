@@ -363,7 +363,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         JSONObject can=model.getJSONObject("can");can.put("abort",true).put("durableStop",true);
         model.put("status","Conversation run open · Waiting for tool · Automatic continuation held");
         for(double scale:new double[]{1,1.5}){
-            model.put("textScale",scale);render(model);assertLayout("workflow app scale "+scale);
+            model.put("appScale",scale);render(model);assertLayout("workflow app scale "+scale);
             TextView stop=(TextView)requireTag("telegram-stop-run");
             check("Stop & hold".equals(stop.getText().toString()),"native label names durable Stop capability at "+scale);
             check(stop.getContentDescription().toString().contains("hold automatic continuation"),"durable control describes policy, not cessation");
