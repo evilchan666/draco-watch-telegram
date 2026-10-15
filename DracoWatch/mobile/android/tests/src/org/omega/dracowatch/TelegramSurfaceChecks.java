@@ -358,6 +358,24 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         ui(()->{request.invoke(activity);return null;});waitForIdleSync();
         check(!activityField("localWebInspection").getBoolean(activity),"second explicit toggle disables local inspection without another enable prompt");
     }
+    private void workflowControlLabels() throws Exception {
+        JSONObject model=base(true,"atlas");model.put("controlRunId","workflow-exact-run");
+        JSONObject can=model.getJSONObject("can");can.put("abort",true).put("durableStop",true);
+        model.put("status","Conversation run open · Waiting for tool · Automatic continuation held");
+        for(double scale:new double[]{1,1.5}){
+            model.put("textScale",scale);render(model);assertLayout("workflow app scale "+scale);
+            TextView stop=(TextView)requireTag("telegram-stop-run");
+            check("Stop & hold".equals(stop.getText().toString()),"native label names durable Stop capability at "+scale);
+            check(stop.getContentDescription().toString().contains("hold automatic continuation"),"durable control describes policy, not cessation");
+            int before=actions.size();click(stop);JSONObject action=event(before,"stop");
+            check(exactScope(action,"atlas")&&"workflow-exact-run".equals(action.getJSONObject("data").optString("runId")),"durable Stop dispatches only captured exact session/run");
+            can.put("durableStop",false);render(model);
+            check("Abort run".equals(((TextView)requireTag("telegram-stop-run")).getText().toString()),"capability loss immediately reverts to honest run-only Abort");
+            can.put("abort",false);render(model);before=actions.size();click(requireTag("telegram-stop-run"));
+            check(event(before,"stop")==null,"revoked Abort cannot dispatch even from a visible native button");
+            can.put("abort",true).put("durableStop",true);
+        }
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -365,6 +383,10 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(activityField("profile").get(activity)==null,"target APK is unpaired; synthetic test cannot contact production");
             AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
             ui(()->{surface=new TelegramSurface(activity,(action,data)->{try{actions.add(json("action",action,"data",new JSONObject(data.toString())));}catch(Exception error){throw new AssertionError(error);}});activity.setContentView(surface);return null;});
+            if(flag("workflowOnly")){
+                workflowControlLabels();
+                result.putString("stream","Workflow native checks passed: "+checks+". Unpaired APK, synthetic listener; no live agent input.\n");finish(0,result);return;
+            }
             localInspectionConsent();
             render(base(false,"main"));
             check(ui(()->surface.showing()),"actual native Telegram-derived surface is displayed");

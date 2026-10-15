@@ -253,6 +253,33 @@ public final class TelegramBridgeChecks extends Instrumentation {
         for (String id : new String[]{"telegram-send", "telegram-send-mode", "telegram-mic", "telegram-attach", "telegram-stop-run", "telegram-options", "telegram-pin-options", "telegram-speed", "telegram-stop-audio", "telegram-nav-chats", "telegram-nav-chamber", "telegram-nav-environment", "telegram-nav-activity", "telegram-nav-settings"}) readableControl(id, bounds, label);
         if (flag("requireFont150")) check(activity.getResources().getConfiguration().fontScale >= 1.49f, "actual native Android font is 150 percent");
     }
+    private void workflowCase() throws Exception {
+        js("(()=>{window.confirm=()=>true;const old=DracoNative.request;DracoNative.request=(id,method,path,body)=>{if(method==='GET'&&path.startsWith('/v1/capabilities?')){bridgeChecks.calls.push({method,path});setTimeout(()=>onDracoResponse({id,ok:true,data:{agent:'atlas',sessionId:'"+SESSION+"',send:true,queue:true,abort:true,durableStop:true,strictSteer:true,attachments:true,voice:true}}),0);}else if(path==='/v1/hold/release'){bridgeChecks.calls.push({id,method,path,body:JSON.parse(body)});}else old(id,method,path,body);};"
+            +"bridgeChecks.workflow=hold=>{const x=bridgeFixture(),a=x.agents.find(a=>a.id==='atlas');a.sessionKey='agent:atlas:telegram:direct:8745908879';a.conversationStatus='active';a.capabilities={send:!hold,queue:!hold,abort:true,durableStop:true,strictSteer:!hold,releaseHold:!!hold};a.controlTargets=[{agent:'atlas',sessionKey:a.sessionKey,sessionId:a.sessionId,runId:'workflow-run',scope:'conversation'}];a.runPhase={phase:'tool-wait',runId:'workflow-run',observedAt:Date.now(),expiresAt:Date.now()+15000};if(hold)a.continuationHold={id:hold,sessionId:a.sessionId,heldAt:Date.now()};return x;};bridgeChecks.workflowAction=(action,data={})=>onDracoTelegramAction({action,data:{agent:'atlas',sessionId:'"+SESSION+"',sessionKey:'agent:atlas:telegram:direct:8745908879',runId:'workflow-run',...data}});onDracoConnection({state:'offline'});onDracoSnapshot(bridgeChecks.workflow(null));DracoWatch.select('atlas');return true;})()");
+        waitShowing(true);
+        for(int i=0;i<100&&!ui(()->((TextView)requireTag("telegram-stop-run")).getText().toString()).equals("Stop & hold");i++)SystemClock.sleep(50);
+        check(ui(()->requireTag("telegram-send").getAlpha())==1f,"native fresh send available before hold");
+        check(ui(()->((TextView)requireTag("telegram-stop-run")).getText().toString()).equals("Stop & hold"),"real bridge carries advertised durable Stop label");
+        js("bridgeChecks.workflowAction('draft',{text:'UNSENT WORKFLOW DRAFT'});onDracoSnapshot(bridgeChecks.workflow('hold-one'))");waitForIdleSync();
+        for(int i=0;i<100&&ui(()->requireTag("telegram-send").getAlpha())==1f;i++)SystemClock.sleep(50);
+        check(ui(()->requireTag("telegram-send").getAlpha())<1f,"real bridge revokes cached Send when hold arrives");
+        click(requireTag("telegram-send"));
+        jsCheck("!bridgeChecks.calls.some(c=>c.path==='/v1/message')","unavailable native Send dispatches nothing and preserves the draft");
+        String status=ui(()->((TextView)requireTag("telegram-status")).getText().toString());
+        check(status.contains("Waiting for tool")&&status.contains("Automatic continuation held"),"native header distinguishes tool wait from continuation hold");
+        screenshot("workflow-held-chat");
+        js("bridgeChecks.workflowAction('details')");waitShowing(false);
+        jsCheck("!!document.getElementById('release-continuation-hold')&&!document.getElementById('release-continuation-hold').disabled","actual WebView details offers exact hold release");
+        js("onDracoSnapshot(bridgeChecks.workflow('hold-two'));document.getElementById('release-continuation-hold').click()");
+        jsCheck("!bridgeChecks.calls.some(c=>c.path==='/v1/hold/release')","stale Android details cannot release replacement hold");
+        js("document.getElementById('details-dialog').close();bridgeChecks.workflowAction('details');document.getElementById('release-continuation-hold').click()");
+        waitJs("bridgeChecks.calls.some(c=>c.path==='/v1/hold/release')");
+        jsCheck("(()=>{const r=bridgeChecks.calls.filter(c=>c.path==='/v1/hold/release');return r.length===1&&r[0].body.holdId==='hold-two'&&r[0].body.sessionId==='"+SESSION+"'&&r[0].body.sessionKey==='agent:atlas:telegram:direct:8745908879';})()","Android release dispatch keeps exact displayed hold and physical session");
+        js("(()=>{const r=bridgeChecks.calls.find(c=>c.path==='/v1/hold/release');onDracoResponse({id:r.id,ok:true,data:{...r.body,id:r.body.idempotencyKey,status:'hold-released'}});onDracoSnapshot(bridgeChecks.workflow(null));})()");waitShowing(true);SystemClock.sleep(200);
+        jsCheck("JSON.parse(localStorage.getItem('"+CACHE+"')).drafts.atlas==='UNSENT WORKFLOW DRAFT'","release leaves Android exact unsent draft intact");
+        jsCheck("bridgeChecks.calls.every(c=>c.method!=='POST'||c.path==='/v1/hold/release'||c.path==='/v1/diagnostics')&&!bridgeChecks.calls.some(c=>c.method==='PLAY-MEDIA')","only synthetic release and metadata posts; no work, media or source replay");
+        check(field("profile").get(activity)==null,"workflow bridge remains unpaired");
+    }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
@@ -267,6 +294,12 @@ public final class TelegramBridgeChecks extends Instrumentation {
             ui(() -> { web.reload(); return null; });
             waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'");
             installTestBoundary();
+            if (flag("workflowOnly")) {
+                workflowCase();
+                result.putString("stream", "Targeted workflow bridge checks passed: " + checks + ". Actual unpaired Activity/WebView/native controls, fresh phase/hold revocation and exact synthetic release; no live input or control.\n");
+                finish(0, result);
+                return;
+            }
             if (flag("executionOnly")) {
                 assertLayout("targeted final 100 percent app scale");
                 screenshot("integrated-restored-chat");

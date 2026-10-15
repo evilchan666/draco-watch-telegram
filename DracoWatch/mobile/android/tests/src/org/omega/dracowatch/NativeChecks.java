@@ -46,6 +46,9 @@ public final class NativeChecks extends Instrumentation {
         check(PrivateMediaProvider.support("support-diagnostics-12345678-1234-1234-1234-123456789abc.json")&&!PrivateMediaProvider.support("../native-diagnostics.json")&&!PrivateMediaProvider.support("support-diagnostics.json"),"support-file export provider accepts generated fixed-prefix names, not arbitrary private paths");
         check(DracoClient.permitted("POST","/v1/message"),"explicit message");
         check(DracoClient.permitted("POST","/v1/abort"),"exact abort");
+        check(DracoClient.permitted("POST","/v1/hold/release"),"explicit exact hold release transport");
+        check(!DracoClient.permitted("GET","/v1/hold/release"),"hold release is never a read");
+        check(!DracoClient.permitted("POST","/v1/hold/release?all=true"),"hold release route cannot broaden its scope");
         check(DracoClient.permitted("POST","/v1/speech"),"speech generation");
         check(!DracoClient.permitted("POST","/v1/input"),"closed route");
         check(!DracoClient.permitted("POST","/v1/stop"),"no invented stop route");

@@ -88,7 +88,7 @@ final class DracoClient {
         if(path==null||path.length()>600||path.contains("#")||path.contains("..")||path.contains("\\")||path.contains("%"))return false;
         if("GET".equals(method))return path.equals("/v1/capabilities")||path.matches("/v1/capabilities\\?agent=(main|forge|atlas|aera-new|vvv|daedalus)")||path.equals("/v1/update")
             ||path.matches("/v1/(snapshot|history)\\?agent=(main|forge|atlas|aera-new|vvv|daedalus)(&[A-Za-z]+=[A-Za-z0-9_-]+)*");
-        return "POST".equals(method)&&(path.equals("/v1/message")||path.equals("/v1/abort")||path.equals("/v1/speech"));
+        return "POST".equals(method)&&(path.equals("/v1/message")||path.equals("/v1/abort")||path.equals("/v1/hold/release")||path.equals("/v1/speech"));
     }
     private static boolean ownerDetailPath(String path){
         if(path==null||path.length()>8192||!path.startsWith("/v1/work/detail?")||path.contains("#")||path.contains("\\"))return false;

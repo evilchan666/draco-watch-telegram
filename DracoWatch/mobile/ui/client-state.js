@@ -38,8 +38,8 @@
     const owned=p?.phase === 'idle' ? status === 'idle' && !p.runId : status === 'active' && statusId(p?.runId) &&
       (!displayedTargets.length || target && p.runId === target.runId);
     const label=({working:'Working', 'tool-wait':'Waiting for tool', 'input-wait':'Waiting for input', blocked:'Blocked', idle:'Idle'})[p?.phase];
-    if (held) base.execution='Automatic continuation held';
-    else if (bound && fresh && owned && label) base.execution=label;
+    base.continuation=held?'Automatic continuation held':null;
+    if (bound && fresh && owned && label) base.execution=label;
     if (status === 'idle') return {...base,summary:'No open run in this conversation; agent-wide occupancy is separate'};
     if (!target) return {...base,summary:status === 'queued' ? 'Admission is not execution or waiting evidence' : 'Exact conversation run unavailable; execution unknown'};
     base.target=target;
@@ -182,8 +182,11 @@
     }
     unresolved(agent) { return this.data.outbox.find(row => row.agent === agent && ['pending','uncertain'].includes(row.state)&&
       !(row.body.mode==='steer'&&['accepted','rejected','indeterminate'].includes(row.outcome?.steering?.status))); }
+    // Release has its own lane: even an unconfirmed Stop may have created the
+    // observed hold. Keep its custody, but never make it a veto on releasing it.
+    unresolvedControl(agent,path='/v1/hold/release') { return this.data.outbox.find(row=>row.agent===agent&&row.path===path&&['pending','uncertain'].includes(row.state)); }
     begin(agent,path,body) {
-      if (this.unresolved(agent)) throw Error('An earlier submission needs its exact-ID acknowledgement.');
+      if (path==='/v1/message' ? this.unresolved(agent) : this.unresolvedControl(agent,path)) throw Error('An earlier submission needs its exact-ID acknowledgement.');
       const row = {id:body.idempotencyKey,agent,path,body:JSON.parse(JSON.stringify(body)),state:'pending',at:Date.now(),note:'Waiting for gateway acknowledgement'};
       this.data.outbox.push(row);this.prune();
       if (!this.save()) { this.data.outbox.pop(); throw Error('Local submission custody could not be saved. Your draft has not been sent.'); }
@@ -198,6 +201,11 @@
     }
     result(id,{ok,data,error,uncertain}={}) {
       const row = this.data.outbox.find(entry => entry.id === id); if (!row) return null;
+      if(row.path==='/v1/hold/release'&&ok&&
+          !((data?.status==='hold-released'||data?.status==='not-dispatched'&&data.dispatched===false)&&data.id===row.id&&data.agent===row.agent&&
+            data.sessionKey===row.body.sessionKey&&data.sessionId===row.body.sessionId&&data.holdId===row.body.holdId)){
+        ok=false;uncertain=true;error='Hold release is unconfirmed; preserve the original hold and request ID.';
+      }
       if(row.body.mode==='steer'&&data?.strictSteer===true){this.steeringResult(data);return row;}
       // A late retry failure cannot undo an authoritative original-ID acceptance.
       if (row.state === 'accepted') return row;
@@ -208,7 +216,10 @@
       } else {
         // A failure of the current retry never disproves admission of an earlier
         // unconfirmed attempt. Even not-dispatched may describe only this retry.
-        const rejected = !row.hasUnconfirmedAttempt && (notDispatched || uncertain === false);
+        // Exact hold-release reconciliation can prove there was no original
+        // durable adapter custody; unlike a generic message retry, that settles
+        // the original non-dispatch even if the first transport reply was lost.
+        const rejected = row.path==='/v1/hold/release'&&ok&&notDispatched || !row.hasUnconfirmedAttempt && (notDispatched || uncertain === false);
         row.state = rejected ? 'rejected' : 'uncertain'; if (!rejected) row.hasUnconfirmedAttempt = true;
         row.note = String(error || data?.error || data?.reason || 'Acceptance is unconfirmed. Keep the original request ID.').slice(0,800);
       }
