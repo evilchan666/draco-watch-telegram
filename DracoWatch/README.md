@@ -32,3 +32,12 @@ or the resulting paired APK. Use the existing signing identity for upgrades.
 SOURCE.json pins the Watch source and Telegram base. Generated output stays under
 ignored build/runtime directories. The integrated APK is not yet live by virtue
 of a successful build; real handset acceptance must be recorded separately.
+
+## Corrective update 0.3.1
+
+Restores the original black/red Watch identity and supplied agent colours. Commands,
+provided exit/output excerpts and public reported checklists are inline. The visible
+Send/Queue/Steer selector changes draft mode without submitting it; unsupported
+exact-run Steer refuses rather than silently dispatching Queue/follow-up.
+Chamber, Environment, pinning, saved custody, speech profiles and pairing remain.
+Source/package/backend publication and physical handset acceptance are separate.

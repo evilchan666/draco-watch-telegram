@@ -1,22 +1,22 @@
 {
-  "watchSource": "fd714655c0f6c655c392f65fe50a7cf660c8927e",
+  "watchSource": "1cd7bfd0e639bfed4b9e84217337979486fcccdb",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "integration": "native Telegram component subset over existing Watch backend",
   "loginMigration": false,
-  "updaterPublished": true,
+  "versionName": "0.3.1",
+  "versionCode": 20,
+  "updaterPublished": false,
   "physicalAcceptance": "unverified",
-  "taskProgressBackend": "staged separately in Watch source; not activated",
-  "idleBubbleExpiryMs": 60000,
-  "packagedCandidateWatchSource": "387e0ccaecc646610d8e0839c501fee5952b63df",
-  "statusTruthDelta": "packaged neutral Run open occupancy and exact observed conversation facts; no execution or waiting inference",
-  "newApkBuilt": true,
-  "requestChronologyDelta": "packaged native/fallback original local bodies, admission labels, exact reconciliation, day dividers, coverage and latest-row indicator",
-  "currentOperation3254": "future producer contract; not serving, missing remains unobserved",
-  "newNativeChecks": "206 native surface and141 actual Activity/WebView/native bridge checks passed on isolated Android15, normal and150 percent app scale; handset acceptance unverified",
-  "packagedWatchSource": "fd714655c0f6c655c392f65fe50a7cf660c8927e",
-  "versionName": "0.3.0",
-  "versionCode": 19,
-  "releaseState": "published privately and exact pinned updater download verified; physical installation unverified",
-  "apkSha256": "f5ba786b42feea1dedf60776512256e5ec6bb250e14c4482c5ad15c96296f882",
-  "hostBackend": "unchanged existing service; newer Watch backend and gateway producer repairs remain staged separately"
+  "theme": "original black/red Watch chrome with independent per-agent accents; existing spatial views unchanged",
+  "execution": "inline supplied command previews, exit/result excerpts and explicit operator-authored checklists; exact scope/revision guards retained",
+  "dispatch": "visible Send/Queue/Steer selector; exact-run Steer remains unsupported and never silently becomes follow-up",
+  "hostBackend": "Watch-only source adoption in progress; shared serving gateway unchanged",
+  "previousRelease": {
+    "versionName": "0.3.0",
+    "versionCode": 19,
+    "watchSource": "fd714655c0f6c655c392f65fe50a7cf660c8927e",
+    "apkSha256": "f5ba786b42feea1dedf60776512256e5ec6bb250e14c4482c5ad15c96296f882",
+    "preserved": true
+  },
+  "nativeChecks": "surface240/242, actual bridge149/151; final payload targeted67/66 on isolated Android15; no handset claim"
 }

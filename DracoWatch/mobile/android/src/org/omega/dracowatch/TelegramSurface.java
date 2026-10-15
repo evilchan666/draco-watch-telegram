@@ -14,6 +14,9 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Editable;
 import android.text.InputType;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
@@ -67,14 +70,16 @@ public final class TelegramSurface extends FrameLayout {
         void send(String action, JSONObject data);
     }
 
-    private static final int BACKGROUND = 0xff111c25;
-    private static final int PANEL = 0xff172734;
-    private static final int PANEL_LIGHT = 0xff203544;
-    private static final int INCOMING = 0xff223645;
-    private static final int OUTGOING = 0xff31564c;
-    private static final int TEXT = 0xfff2f5f7;
-    private static final int SECONDARY = 0xffb2c4d0;
-    private static final int ACCENT = 0xff83c9ef;
+    // Match Watch's original black/red shell, not Telegram's default blue/green.
+    // Agent identity accents are supplied by the same Watch roster as the world.
+    private static final int BACKGROUND = 0xff000000;
+    private static final int PANEL = 0xff101010;
+    private static final int PANEL_LIGHT = 0xff202020;
+    private static final int INCOMING = 0xff151515;
+    private static final int TEXT = 0xffffffff;
+    private static final int SECONDARY = 0xffbcbcbc;
+    private static final int ACCENT = 0xffff263c;
+    private static final int SELECTED = 0xff00ffff;
     private static final int WARNING = 0xffffd38d;
     static final int TAG_ROW_KEY = 0x7f0f3412;
     private static final String[] VIEWS = {
@@ -116,6 +121,7 @@ public final class TelegramSurface extends FrameLayout {
     private final Button attach;
     private final Button microphone;
     private final Button send;
+    private final Button modeSelector;
     private final LinearLayout footer;
     private final List<TextView> navigation = new ArrayList<>();
     private final Set<String> expanded = new HashSet<>();
@@ -136,6 +142,8 @@ public final class TelegramSurface extends FrameLayout {
     private float nativeFontScale;
     private JSONObject actionScope;
     private String submittedDraft;
+    private String selectedSendMode = "send";
+    private String modeRunId = "";
     private String lastFocusMessage = "";
     private boolean compactLayout;
     private boolean shortLayout;
@@ -367,11 +375,20 @@ public final class TelegramSurface extends FrameLayout {
             else available("voice", "record", "Recording is unavailable in this conversation.");
         });
         editor.addView(microphone, new LinearLayout.LayoutParams(dp(45), -2));
-        send = button("Send", "Send message; long press for Queue, Steer and Stop");
+        modeSelector = button("Follow-up ▾", "Send mode: Follow-up. Choose Send, Queue or Steer without submitting the draft.");
+        modeSelector.setTag("telegram-send-mode");
+        modeSelector.setMinWidth(dp(42));
+        modeSelector.setMinimumWidth(dp(42));
+        modeSelector.setMinHeight(dp(44));
+        modeSelector.setMinimumHeight(dp(44));
+        modeSelector.setMaxLines(1);
+        modeSelector.setOnClickListener(v -> showSendOptions());
+        editor.addView(modeSelector, new LinearLayout.LayoutParams(-2, -2));
+        send = button("Send", "Send message using the visible mode selector");
         send.setTag("telegram-send");
         send.setTextColor(ACCENT);
         icon(send, "send", ACCENT);
-        send.setOnClickListener(v -> sendMode("send"));
+        send.setOnClickListener(v -> sendMode(selectedSendMode));
         send.setOnLongClickListener(v -> {
             showSendOptions();
             return true;
@@ -433,8 +450,14 @@ public final class TelegramSurface extends FrameLayout {
             chromeSignature = "";
             input.clearFocus();
             submittedDraft = null;
+            selectedSendMode = "send";
             lastFocusMessage = "";
             listAtEnd = true;
+        }
+        String currentModeRunId = value.optString("controlRunId");
+        if (!modeRunId.equals(currentModeRunId)) {
+            modeRunId = currentModeRunId;
+            selectedSendMode = "send";
         }
         chat = nextChat;
         viewName = nextView;
@@ -481,14 +504,29 @@ public final class TelegramSurface extends FrameLayout {
         JSONObject can = payload.optJSONObject("can");
         String signature = payload.optString("name") + payload.optString("status") + payload.optBoolean("live")
             + payload.optString("historyNote") + payload.optString("workSummary") + payload.optString("voiceStatus")
-            + payload.optDouble("playbackRate", 1) + payload.optString("replyLabel")
+            + payload.optDouble("playbackRate", 1) + payload.optString("replyLabel") + payload.optString("color") + selectedSendMode
             + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins")) + compactLayout + shortLayout + payload.optBoolean("recording");
         if (!signature.equals(chromeSignature)) {
             chromeSignature = signature;
             placePinBanner();
-            int color = color(payload.opt("color"), ACCENT);
-            title.setText(chat ? payload.optString("name", "Agent conversation")
-                : "activity".equals(viewName) ? "Live activity" : "DRACO Watch");
+            int color = chat ? agentColor(payload.optString("agent")) : ACCENT;
+            if (chat) {
+                title.setText(payload.optString("name", "Agent conversation"));
+                title.setTextColor(color);
+            } else if ("activity".equals(viewName)) {
+                title.setText("Live activity");
+                title.setTextColor(TEXT);
+            } else {
+                SpannableString brand = new SpannableString("DRACO WATCH");
+                brand.setSpan(new ForegroundColorSpan(ACCENT), 6, brand.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                title.setText(brand);
+                title.setTextColor(TEXT);
+            }
+            reply.setTextColor(color);
+            input.setHighlightColor(withAlpha(color, 0x55));
+            icon(send, "send", BACKGROUND);
+            send.setBackground(round(color, 14));
+            jump.setBackground(outline(PANEL_LIGHT, 24, chat ? color : SELECTED));
             backButton.setVisibility(chat || !"chats".equals(viewName) ? VISIBLE : GONE);
             runStop.setVisibility(chat ? VISIBLE : GONE);
             runStop.setAlpha(capability("abort") ? 1 : .55f);
@@ -534,7 +572,14 @@ public final class TelegramSurface extends FrameLayout {
             input.setMaxHeight(Math.max(dp(44), Math.min(editorCap, editorLineHeight * editorLines + editorPadding)));
             list.setPadding(dp(6), dp(8), dp(6), dp(shortLayout ? 8 : 12));
             compose.setVisibility(chat ? VISIBLE : GONE);
-            send.setAlpha(capability("send") ? 1 : .55f);
+            String selectedModeLabel = "queue".equals(selectedSendMode) ? "Queue" : "steer".equals(selectedSendMode) ? "Steer" : compactLayout ? "Send" : "Follow-up";
+            modeSelector.setText(selectedModeLabel + " ▾");
+            modeSelector.setTextColor(color);
+            modeSelector.setContentDescription("Send mode: " + ("send".equals(selectedSendMode) ? "Send / follow-up (default)" : selectedModeLabel)
+                + ". Tap to choose without submitting. Queue uses the same current follow-up policy; unsupported Steer dispatches nothing.");
+            send.setAlpha(capability(selectedSendMode) ? 1 : .55f);
+            send.setContentDescription("Send current draft as " + ("send".equals(selectedSendMode) ? "a follow-up" : selectedModeLabel)
+                + (capability(selectedSendMode) ? "." : ". This mode is unsupported now; pressing Send retains the draft and dispatches nothing."));
             attach.setAlpha(capability("attachments") ? 1 : .55f);
             boolean recording = payload.optBoolean("recording");
             microphone.setAlpha(recording || capability("voice") ? 1 : .55f);
@@ -544,15 +589,15 @@ public final class TelegramSurface extends FrameLayout {
             for (int i = 0; i < navigation.size(); i++) {
                 boolean selected = VIEWS[i].equals(chat ? "chats" : viewName);
                 TextView tab = navigation.get(i);
-                tab.setTextColor(selected ? color : SECONDARY);
-                tab.setBackground(selected ? round(PANEL_LIGHT, 12) : null);
+                tab.setTextColor(selected ? ACCENT : SECONDARY);
+                tab.setBackground(selected ? outline(withAlpha(ACCENT, 0x25), 12, ACCENT) : null);
                 tab.setSelected(selected);
                 tab.setText(shortLayout ? "" : compactLayout ? COMPACT_VIEW_LABELS[i] : VIEW_LABELS[i]);
                 // An icon-only tab must not reserve an invisible scaled text
                 // line. Actual labels retain their full app/system SP scaling.
                 tab.setTextSize(shortLayout ? 0 : 11 * appScale);
                 tab.setIncludeFontPadding(!shortLayout);
-                tab.setCompoundDrawablesWithIntrinsicBounds(null, new Glyph(VIEWS[i], selected ? color : SECONDARY), null, null);
+                tab.setCompoundDrawablesWithIntrinsicBounds(null, new Glyph(VIEWS[i], selected ? ACCENT : SECONDARY), null, null);
                 tab.setMinHeight(dp(shortLayout ? 44 : 52));
             }
             jump.setText(compactLayout ? "↓" : "↓ Latest");
@@ -820,17 +865,28 @@ public final class TelegramSurface extends FrameLayout {
         final JSONObject origin = scope();
         String steerLabel = capability("steer") ? "Steer this exact active run" : "Steer unavailable · not dispatched";
         new AlertDialog.Builder(getContext()).setTitle("Run controls")
-            .setItems(new String[]{"Send new message", "Queue a follow-up", steerLabel,
+            .setItems(new String[]{"Send / follow-up · default", "Queue · same current follow-up policy", steerLabel,
                 capability("abort") ? "Stop the observed run" : "Stop unavailable for the observed run",
                 "Files, outbox and advanced tools", "Commands"}, (dialog, which) -> withScope(origin, () -> {
-                if (!sameScope(origin)) { toast("The conversation changed. No run control was dispatched."); return; }
-                if (which == 0) sendMode("send");
-                else if (which == 1) sendMode("queue");
-                else if (which == 2) sendMode("steer");
+                if (!sameScope(origin) || which <= 3 && !origin.optString("runId").equals(payload.optString("controlRunId"))) {
+                    toast("The conversation or observed run changed. Reopen its controls. Nothing was dispatched.");
+                    return;
+                }
+                if (which == 0) selectSendMode("send");
+                else if (which == 1) selectSendMode("queue");
+                else if (which == 2) selectSendMode("steer");
                 else if (which == 3) available("abort", "stop", "No supported Stop target is currently observed. Nothing was dispatched.");
                 else if (which == 4) emit("composer");
                 else emit("commands");
             })).show();
+    }
+
+    private void selectSendMode(String mode) {
+        selectedSendMode = mode;
+        updateChrome(false);
+        if ("steer".equals(mode) && !capability("steer")) {
+            toast("Exact-run steering is unsupported. The draft is retained; nothing was queued or dispatched. Choose Follow-up separately if wanted.");
+        }
     }
 
     private void sendMode(String mode) {
@@ -1051,17 +1107,19 @@ public final class TelegramSurface extends FrameLayout {
         JSONObject agent = row.value;
         LinearLayout outer = horizontal();
         outer.setPadding(dp(10), dp(14), dp(8), dp(14));
-        TextView avatar = text(22, TEXT, true);
+        int accent = agentColor(agent.optString("id"));
+        outer.setBackground(outline(tint(PANEL, accent, .08f), 12, tint(0xff424242, accent, .55f)));
+        TextView avatar = text(22, accent, true);
         String name = agent.optString("name", agent.optString("id", "Agent"));
         avatar.setText(name.isEmpty() ? "?" : name.substring(0, 1));
         avatar.setGravity(Gravity.CENTER);
-        avatar.setBackground(round(color(agent.opt("color"), PANEL_LIGHT), 28));
+        avatar.setBackground(outline(tint(PANEL_LIGHT, accent, .1f), 28, accent));
         outer.addView(avatar, new LinearLayout.LayoutParams(dp(52), dp(52)));
         LinearLayout content = vertical();
         content.setPadding(dp(13), 0, 0, 0);
-        TextView nameView = text(17, TEXT, true);
+        TextView nameView = text(17, accent, true);
         nameView.setText(name);
-        TextView state = text(12, ACCENT, false);
+        TextView state = text(12, SECONDARY, false);
         state.setText(agent.optString("status", "Status unavailable"));
         TextView preview = text(14, SECONDARY, false);
         preview.setText(agent.optString("preview", "No public report available"));
@@ -1087,7 +1145,9 @@ public final class TelegramSurface extends FrameLayout {
         outer.setPadding(outgoing ? dp(24) : dp(2), dp(3), outgoing ? dp(2) : dp(24), dp(3));
         LinearLayout bubble = vertical();
         bubble.setPadding(dp(13), dp(9), dp(13), dp(8));
-        MessageDrawable background = new MessageDrawable(getContext(), outgoing, outgoing ? OUTGOING : INCOMING);
+        int accent = agentColor(payload.optString("agent"));
+        MessageDrawable background = new MessageDrawable(getContext(), outgoing,
+            outgoing ? tint(INCOMING, accent, .07f) : INCOMING);
         background.setAdjacent(adjacentMessage(position, -1, outgoing), adjacentMessage(position, 1, outgoing));
         bubble.setBackground(background);
         outer.addView(bubble, new LinearLayout.LayoutParams(-2, -2));
@@ -1097,7 +1157,7 @@ public final class TelegramSurface extends FrameLayout {
         if (!local && isPinned(message.optString("id"))) role += " · Pinned";
         if (local) role += " · Local request";
         else if (!kind.isEmpty()) role += " · " + kind;
-        TextView author = text(11, ACCENT, true);
+        TextView author = text(11, outgoing ? TEXT : accent, true);
         author.setText(role);
         bubble.addView(author);
 
@@ -1141,7 +1201,7 @@ public final class TelegramSurface extends FrameLayout {
             final String unavailableReason = item.optString("unavailableReason", "No authenticated playable download is available. This is not a working audio control.");
             Button mediaButton = button(item.optString("label", "Attachment") + (available ? " · Open" : " · Unavailable"),
                 available ? "Open authenticated attachment" : "Attachment has no usable authenticated download");
-            mediaButton.setTextColor(available ? ACCENT : WARNING);
+            mediaButton.setTextColor(available ? accent : WARNING);
             mediaButton.setTag("telegram-media-" + message.optString("id") + "-" + index);
             mediaButton.setOnClickListener(v -> {
                 if (!sameScope(origin)) { toast("The conversation changed. Nothing was played."); return; }
@@ -1197,18 +1257,49 @@ public final class TelegramSurface extends FrameLayout {
         LinearLayout outer = vertical();
         outer.setPadding(dp(7), dp(5), dp(7), dp(5));
         LinearLayout card = vertical();
-        card.setBackground(round(PANEL, 12));
+        int accent = agentColor(event.optString("agent"));
+        card.setBackground(outline(PANEL, 12, tint(0xff424242, accent, .55f)));
         card.setPadding(dp(12), dp(10), dp(12), dp(10));
         outer.addView(card, new LinearLayout.LayoutParams(-1, -2));
-        TextView heading = text(13, ACCENT, true);
+        TextView heading = text(13, accent, true);
         heading.setText(event.optString("name", event.optString("agent", "Agent")) + " · "
             + event.optString("kind", "Operational observation") + " · " + time(event.opt("timestamp")));
         card.addView(heading);
         TextView summary = text(15, TEXT, false);
-        summary.setText(event.optString("text", "Summary unavailable; no outcome inferred."));
+        String preview = event.optString("preview");
+        if (preview.isEmpty()) preview = event.optString("text", "Summary unavailable; no outcome inferred.");
+        if (preview.length() > 2000) preview = preview.substring(0, 2000) + "\n[Inline preview limited; expand the supplied observation below.]";
+        summary.setText(preview);
+        summary.setTag("telegram-operation-preview-" + event.optString("id"));
         summary.setTextIsSelectable(true);
         summary.setPadding(0, dp(5), 0, dp(5));
         card.addView(summary);
+        JSONArray steps = event.optJSONArray("steps");
+        if (steps != null && steps.length() > 0) {
+            TextView checklistTitle = text(13, accent, true);
+            checklistTitle.setText("Reported task checklist");
+            card.addView(checklistTitle);
+            for (int i = 0; i < Math.min(32, steps.length()); i++) {
+                JSONObject step = steps.optJSONObject(i);
+                if (step == null) continue;
+                String label = step.optString("step");
+                if (label.isEmpty()) continue;
+                if (label.length() > 320) label = label.substring(0, 320) + "…";
+                String status = step.optString("status");
+                String marker = "completed".equals(status) ? "[✓] " : "in_progress".equals(status) ? "[→] " : "[ ] ";
+                TextView stepView = text(14, "in_progress".equals(status) ? TEXT : SECONDARY, false);
+                stepView.setText(marker + label + ("in_progress".equals(status) ? " · reported current step" : ""));
+                stepView.setTag("telegram-step-" + event.optString("id") + "-" + i);
+                stepView.setTextIsSelectable(true);
+                stepView.setPadding(0, dp(3), 0, dp(3));
+                card.addView(stepView);
+            }
+            if (steps.length() > 32) {
+                TextView limited = text(12, WARNING, false);
+                limited.setText("Reported checklist is bounded to 32 supplied steps.");
+                card.addView(limited);
+            }
+        }
         String details = detail(event.opt("detail"));
         String revision = event.optString("revision");
         String expansionKey = expansionKey(row);
@@ -1498,6 +1589,31 @@ public final class TelegramSurface extends FrameLayout {
         result.setColor(color);
         result.setCornerRadius(dp(radius));
         return result;
+    }
+
+    private GradientDrawable outline(int fill, float radius, int stroke) {
+        GradientDrawable result = round(fill, radius);
+        result.setStroke(dp(1), stroke);
+        return result;
+    }
+
+    private int agentColor(String agentId) {
+        JSONArray roster = payload.optJSONArray("roster");
+        if (roster != null) for (int i = 0; i < roster.length(); i++) {
+            JSONObject agent = roster.optJSONObject(i);
+            if (agent != null && agentId.equals(agent.optString("id"))) return color(agent.opt("color"), SECONDARY);
+        }
+        return agentId.equals(payload.optString("agent")) ? color(payload.opt("color"), SELECTED) : SECONDARY;
+    }
+
+    private static int withAlpha(int value, int alpha) {
+        return (value & 0x00ffffff) | (alpha << 24);
+    }
+
+    private static int tint(int background, int accent, float fraction) {
+        return Color.rgb(Math.round(Color.red(background) * (1 - fraction) + Color.red(accent) * fraction),
+            Math.round(Color.green(background) * (1 - fraction) + Color.green(accent) * fraction),
+            Math.round(Color.blue(background) * (1 - fraction) + Color.blue(accent) * fraction));
     }
 
     private int dp(float value) {

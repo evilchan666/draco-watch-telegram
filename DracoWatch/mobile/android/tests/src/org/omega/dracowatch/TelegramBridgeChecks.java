@@ -164,16 +164,37 @@ public final class TelegramBridgeChecks extends Instrumentation {
         if (!flag("screenshots")) return;
         // Deliberate unavailable-control checks show LENGTH_LONG refusal toasts.
         // Evidence must show the app rather than the temporary system overlay.
-        waitForIdleSync(); SystemClock.sleep(3700); Bitmap shot = getUiAutomation().takeScreenshot();
+        waitForIdleSync(); SystemClock.sleep("integrated-pinned-chat".equals(name) ? 7500 : 3700); Bitmap shot = getUiAutomation().takeScreenshot();
         if (shot == null) throw new AssertionError("Screenshot unavailable");
         File dir = new File(getTargetContext().getExternalFilesDir(null), "telegram-bridge-checks"); if (!dir.exists() && !dir.mkdirs()) throw new AssertionError("Screenshot directory unavailable");
         File file = new File(dir, name + "-font" + Math.round(activity.getResources().getConfiguration().fontScale * 100) + ".png");
         try (FileOutputStream out = new FileOutputStream(file)) { shot.compress(Bitmap.CompressFormat.PNG, 100, out); } finally { shot.recycle(); }
     }
+    private void executionPreviewCase() throws Exception {
+        js("(()=>{const x=bridgeFixture(),now=Date.now(),scope={agent:'atlas',sessionId:'"+SESSION+"',sessionKey:'bridge:atlas',runId:'bridge-execution-run',callId:'bridge-execution-call'};"
+            +"x.workActivity=[{...scope,id:'bridge-execution-card',role:'assistant',kind:'Tool finished',text:'Observed shell command result',timestamp:now,source:'authenticated-tool-status',publicAttested:true,evidenceRevision:'8'.repeat(64),evidenceSource:{kind:'recorded-history',sequence:9,projectionRevision:1,observedAt:now,freshUntil:now+15000},observation:{...scope,version:1,tool:'exec_command',toolName:'functions.exec_command',phase:'result',redacted:true,command:{program:'rg',operation:'search',flags:['-n'],targets:['mobile/ui/app.js'],preview:'rg -n \"steer|chat.abort\" mobile/ui/app.js'},result:{exitCode:2,summary:'Safe observed output: command inspected Stop and Steer controls.'},privateModelContext:'PRIVATE_EXECUTION_CONTEXT_MUST_NOT_RENDER',gaps:[]}}];onDracoSnapshot(x);DracoWatch.select('atlas');return true;})()");
+        waitShowing(true);waitRows("$ rg -n");
+        String text=rowsText();
+        check(text.contains("$ rg -n \"steer|chat.abort\" mobile/ui/app.js")&&text.contains("Exit 2")
+            &&text.contains("Safe observed output: command inspected Stop and Steer controls."),
+            "actual app.js to native bridge keeps safe command exit and output visible inline before expansion");
+        check(tag("telegram-evidence-bridge-execution-card")==null&&!text.contains("PRIVATE_EXECUTION_CONTEXT_MUST_NOT_RENDER"),
+            "actual inline execution does not require provenance expansion and never renders private context");
+        revealRowControl("telegram-expand-bridge-execution-card");
+        screenshot("integrated-execution-inline");
+    }
     private void publicProgressCase() throws Exception {
         js("(()=>{const x=bridgeFixture(),now=Date.now(),scope={agent:'atlas',sessionId:'"+SESSION+"',sessionKey:'bridge:atlas',runId:'bridge-owned-run',callId:'bridge-progress-call'};"
             +"x.workActivity=[{...scope,id:'bridge-progress-card',role:'assistant',kind:'Tool started',text:'Task progress 1/3 · Current: Integrate native controls',timestamp:now,source:'authenticated-tool-status',publicAttested:true,evidenceRevision:'7'.repeat(64),evidenceSource:{kind:'recorded-history',sequence:8,projectionRevision:1,observedAt:now,freshUntil:now+15000},observation:{...scope,version:1,tool:'progress_card',toolName:'functions.progress_card',phase:'start',redacted:true,taskProgress:{version:1,source:'operator-progress-card',completed:99,total:99,current:'FORGED_DERIVED_VALUE',steps:[{step:'Preserve current release',status:'completed'},{step:'Integrate native controls',status:'in_progress'},{step:'Verify live operational stream',status:'pending'}]},privateModelContext:'PRIVATE_CONTEXT_SHOULD_NOT_BE_RENDERED',gaps:[]}}];onDracoSnapshot(x);DracoWatch.select('atlas');return true;})()");
         waitShowing(true); waitRows("Task progress 1/3");
+        String inlineRows = rowsText();
+        check(inlineRows.contains("Reported task checklist") && inlineRows.contains("[✓] Preserve current release")
+            && inlineRows.contains("[→] Integrate native controls · reported current step") && inlineRows.contains("[ ] Verify live operational stream"),
+            "actual JS-to-native bridge exposes completed current pending public checklist steps before evidence expansion");
+        check(tag("telegram-evidence-bridge-progress-card") == null,
+            "inline public checklist does not depend on opening optional provenance");
+        revealRowControl("telegram-expand-bridge-progress-card");
+        screenshot("integrated-public-progress-inline");
         click(revealRowControl("telegram-expand-bridge-progress-card"));
         TextView evidence=(TextView)requireTag("telegram-evidence-bridge-progress-card");String detail=ui(()->evidence.getText().toString());
         check(detail.contains("Task progress: 1/3 complete")&&detail.contains("Reported current step: Integrate native controls"),"actual bridge/native public progress recomputes completed count and current step rather than trusting derived fields");
@@ -217,7 +238,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
         check(composerHeight <= Math.floor(bounds.height() * (shortHeight ? .34 : .24)), label + " bounded integrated composer leaves useful message space");
         check(ui(() -> draft.getWidth()) >= dp(100), label + " draft retains a useful at-least-100dp typing width");
         check(ui(() -> draft.getHeight()) <= Math.max(dp(96), 3 * ui(() -> draft.getLineHeight()) + ui(() -> draft.getCompoundPaddingTop() + draft.getCompoundPaddingBottom())), label + " exact draft stays inside bounded multiline editor");
-        for (String id : new String[]{"telegram-send", "telegram-mic", "telegram-attach", "telegram-stop-run", "telegram-options", "telegram-pin-options", "telegram-speed", "telegram-stop-audio", "telegram-nav-chats", "telegram-nav-chamber", "telegram-nav-environment", "telegram-nav-activity", "telegram-nav-settings"}) readableControl(id, bounds, label);
+        for (String id : new String[]{"telegram-send", "telegram-send-mode", "telegram-mic", "telegram-attach", "telegram-stop-run", "telegram-options", "telegram-pin-options", "telegram-speed", "telegram-stop-audio", "telegram-nav-chats", "telegram-nav-chamber", "telegram-nav-environment", "telegram-nav-activity", "telegram-nav-settings"}) readableControl(id, bounds, label);
         if (flag("requireFont150")) check(activity.getResources().getConfiguration().fontScale >= 1.49f, "actual native Android font is 150 percent");
     }
     @Override public void onStart() {
@@ -234,6 +255,22 @@ public final class TelegramBridgeChecks extends Instrumentation {
             ui(() -> { web.reload(); return null; });
             waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'");
             installTestBoundary();
+            if (flag("executionOnly")) {
+                assertLayout("targeted final 100 percent app scale");
+                screenshot("integrated-restored-chat");
+                click(requireTag("telegram-nav-chats"));
+                waitShowing(true);
+                for(int i=0;i<100&&!ui(()->((TextView)requireTag("telegram-title")).getText().toString()).equals("DRACO WATCH");i++)SystemClock.sleep(100);
+                check(ui(()->((TextView)requireTag("telegram-title")).getText().toString()).equals("DRACO WATCH"),"actual final bridge shows restored Watch roster brand");
+                screenshot("integrated-restored-roster");
+                js("DracoWatch.select('atlas')");waitShowing(true);waitRows(PUBLIC_TEXT);
+                executionPreviewCase();
+                publicProgressCase();
+                assertBoundary("targeted inline execution bridge");
+                result.putString("stream", "Targeted inline execution bridge checks passed: " + checks + ". Actual unpaired Activity/WebView/native restored roster, chat, mode-selector layout, command-result preview and public checklist; no production input/audio.\n");
+                finish(0, result);
+                return;
+            }
             check(ui(() -> surface.getParent()) == ui(() -> web.getParent()), "real native overlay and retained WebView share the production Activity surface");
             check(ui(() -> descendants(surface).stream().anyMatch(v -> v.getClass().getName().equals("org.telegram.ui.Components.ChatActivityEnterTopView"))), "integrated surface instantiates genuine Telegram composer-top source");
             check(ui(() -> ((TextView) requireTag("telegram-title")).getText().toString()).equals("ATLAS"), "snapshot routes to exact selected agent in actual native header");

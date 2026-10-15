@@ -5,6 +5,10 @@ import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
 import android.graphics.Rect;
+import android.graphics.drawable.ColorDrawable;
+import android.graphics.drawable.GradientDrawable;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.os.Looper;
@@ -40,6 +44,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private final List<JSONObject> actions = new ArrayList<>();
     private static final String[] AGENTS = {"main", "forge", "atlas", "aera-new", "vvv", "daedalus"};
     private static final String[] NAMES = {"Commander", "FORGE", "ATLAS", "Æra", "VVV", "Daedalus"};
+    private static final String[] COLORS = {"#ff00e6", "#ff6400", "#00ffff", "#39ff14", "#ffff00", "#b9e4ff"};
     private static final String LONG_TEXT = "COMPLETE PUBLIC REPORT\n" + repeat("Readable full message, not a preview. ", 28) + "\nEXACT_END_MARKER";
 
     @Override public void onCreate(Bundle args) { super.onCreate(args); arguments = args == null ? new Bundle() : args; start(); }
@@ -72,14 +77,15 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private static JSONObject json(Object... pairs) throws Exception { JSONObject value=new JSONObject();for(int i=0;i<pairs.length;i+=2)value.put((String)pairs[i],pairs[i+1]);return value; }
     private JSONObject base(boolean chat, String agent) throws Exception {
         long now=System.currentTimeMillis();JSONArray roster=new JSONArray();
-        for(int i=0;i<AGENTS.length;i++)roster.put(json("id",AGENTS[i],"name",NAMES[i],"status",i==2?"Active · observed":"Idle · observed","preview","Public operational report for "+AGENTS[i],"color","#70bfe8"));
+        for(int i=0;i<AGENTS.length;i++)roster.put(json("id",AGENTS[i],"name",NAMES[i],"status",i==2?"Active · observed":"Idle · observed","preview","Public operational report for "+AGENTS[i],"color",COLORS[i]));
         return json("visible",true,"chat",chat,"view","chats","agent",agent,"sessionId","physical-"+agent,"sessionKey","fixture:"+agent,
-            "name",name(agent),"status","Observed current run","live",true,"draft","","can",json("send",true,"queue",false,"steer",false,"abort",false,"voice",false,"attachments",true),
+            "name",name(agent),"color",colorFor(agent),"status","Observed current run","live",true,"draft","","can",json("send",true,"queue",false,"steer",false,"abort",false,"voice",false,"attachments",true),
             "roster",roster,"messages",new JSONArray().put(json("id","m1","role","assistant","kind","Public report","text",LONG_TEXT,"timestamp",now,"canRead",false,"canPin",true,"canReply",true)).put(json("id","m2","role","user","text","Second readable message","timestamp",now,"canPin",true,"canReply",true)),
             "pins",new JSONArray().put(json("messageId","m1","title","Pinned exact public report","text",LONG_TEXT)).put(json("messageId","not-loaded","title","Older pinned report","text","Older independently retained public report")),
             "pinHistory",new JSONArray().put(json("action","pin","messageId","m1","title","Pinned exact public report","at",now)),
             "playbackRate",.75,"voiceStatus","Ready · synthetic, no audio played","historyNote","Partial public history; no outcome inferred","workSummary","Observed task · tool running","attachments",new JSONArray(),"outbox",new JSONArray());
     }
+    private static String colorFor(String id){for(int i=0;i<AGENTS.length;i++)if(AGENTS[i].equals(id))return COLORS[i];return "#bcbcbc";}
     private static String name(String id){for(int i=0;i<AGENTS.length;i++)if(AGENTS[i].equals(id))return NAMES[i];return id;}
     private View row(int position) throws Exception {
         ListView list=timeline();return ui(() -> list.getAdapter().getView(position,null,list));
@@ -131,6 +137,69 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private boolean exactScope(JSONObject event,String agent) {
         if(event==null)return false;JSONObject data=event.optJSONObject("data");if(data==null)return false;
         return agent.equals(data.optString("agent"))&&("physical-"+agent).equals(data.optString("sessionId"));
+    }
+    private void identityModesAndInlineEvidence() throws Exception {
+        render(base(false,"atlas"));
+        check(ui(() -> ((ColorDrawable) surface.getBackground()).getColor()) == 0xff000000,
+            "native shell preserves original Watch black background");
+        TextView brand = (TextView) requireTag("telegram-title");
+        check(ui(() -> brand.getText() instanceof Spanned && "DRACO WATCH".equals(brand.getText().toString())
+            && ((Spanned) brand.getText()).getSpans(6, 11, ForegroundColorSpan.class)[0].getForegroundColor() == 0xffff263c),
+            "native DRACO WATCH brand retains red Watch wordmark");
+        TextView activeNav = (TextView) requireTag("telegram-nav-chats");
+        check(ui(() -> activeNav.getCurrentTextColor()) == 0xffff263c
+            && ui(() -> ((GradientDrawable) activeNav.getBackground()).getColor().getDefaultColor()) == 0x25ff263c,
+            "selected navigation retains original red fill and accent independently of selected agent");
+        for(int i=0;i<AGENTS.length;i++){
+            TextView nameView=exactText(row(i),NAMES[i]);
+            check(nameView!=null&&nameView.getCurrentTextColor()==android.graphics.Color.parseColor(COLORS[i]),
+                "native roster preserves independent supplied identity colour for "+AGENTS[i]);
+        }
+        JSONObject model=base(true,"atlas");model.put("draft","Exact draft retained by mode choice");
+        model.put("work",new JSONArray().put(json("id","inline-work","agent","atlas","sessionId","physical-atlas",
+            "name","ATLAS","kind","Tool returned","text","Generic text is not a command preview",
+            "preview","rg --files mobile/ui\nExit: 2 · observed result", "timestamp",System.currentTimeMillis(),"revision","inline-revision",
+            "steps",new JSONArray().put(json("step","Inspect command result","status","completed"))
+                .put(json("step","Repair the consumer","status","in_progress")).put(json("step","Verify the changed screen","status","pending")),
+            "detail","Agent: atlas\nCall: exact-fixture-call\nRevision: inline-revision")));
+        render(model);
+        check(((TextView)requireTag("telegram-title")).getCurrentTextColor()==0xff00ffff,
+            "native conversation keeps its own supplied agent accent rather than generic blue");
+        View work=rowForKey("activity:"+JSONObject.quote("atlas")+":"+JSONObject.quote("physical-atlas")+":"+JSONObject.quote("inline-work"));
+        TextView preview=(TextView)work.findViewWithTag("telegram-operation-preview-inline-work");
+        check(preview!=null&&"rg --files mobile/ui\nExit: 2 · observed result".equals(preview.getText().toString())&&preview.isTextSelectable(),
+            "actual safe command and result preview are inline and selectable before evidence expansion");
+        check(work.findViewWithTag("telegram-evidence-inline-work")==null&&exactText(work,"Reported task checklist")!=null,
+            "provenance expansion is optional and does not hide the reported checklist");
+        check(exactText(work,"[✓] Inspect command result")!=null&&exactText(work,"[→] Repair the consumer · reported current step")!=null
+            &&exactText(work,"[ ] Verify the changed screen")!=null,"completed current and pending public steps render inline with reported-state wording");
+        TextView mode=(TextView)requireTag("telegram-send-mode");
+        check(mode.getText().toString().contains("▾")&&mode.getContentDescription().toString().contains("Send / follow-up (default)"),
+            "send-mode choice is a visible accessible control beside single-tap Send");
+        int before=actions.size();click(mode);dialogChoice("Steer unavailable · not dispatched");
+        check(actions.size()==before&&((TextView)requireTag("telegram-send-mode")).getText().toString().startsWith("Steer"),
+            "choosing unsupported Steer records only explicit local mode without submission");
+        click(requireTag("telegram-send"));check(event(before,"send")==null,
+            "primary Send refuses explicitly selected unsupported Steer without silent follow-up fallback");
+        check(((EditText)requireTag("telegram-draft")).getText().toString().equals("Exact draft retained by mode choice"),
+            "unsupported selected Steer preserves the complete visible draft");
+        click(requireTag("telegram-send-mode"));dialogChoice("Queue · same current follow-up policy");
+        check(actions.size()==before&&((TextView)requireTag("telegram-send-mode")).getText().toString().startsWith("Queue"),
+            "Queue selection is explicit and labelled same-policy without dispatching");
+        JSONObject successor=new JSONObject(model.toString());successor.put("controlRunId","successor-run");
+        render(successor);
+        check(((TextView)requireTag("telegram-send-mode")).getContentDescription().toString().contains("Send / follow-up (default)"),
+            "successor observed run resets previous mode instead of silently retargeting selected Steer or Queue");
+        click(requireTag("telegram-send-mode"));
+        JSONObject nextRun=new JSONObject(successor.toString());nextRun.put("controlRunId","another-run");render(nextRun);
+        dialogChoice("Steer unavailable · not dispatched");
+        check(actions.size()==before&&((TextView)requireTag("telegram-send-mode")).getContentDescription().toString().contains("Send / follow-up (default)"),
+            "retained mode dialog cannot select steering against a successor observed run");
+        JSONObject replacement=new JSONObject(model.toString());replacement.put("sessionId","physical-atlas-replacement");
+        render(replacement);
+        check(((TextView)requireTag("telegram-send-mode")).getContentDescription().toString().contains("Send / follow-up (default)"),
+            "physical session replacement resets local mode to default follow-up instead of carrying a previous run mode");
+        render(base(true,"atlas"));
     }
     private void localRequestsAndDates() throws Exception {
         Calendar day=Calendar.getInstance();day.clear();day.set(2026,Calendar.OCTOBER,14,0,0,0);
@@ -228,7 +297,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         check(composerHeight<=Math.floor(root.height()*(shortHeight?.34:.24)),label+" bounded composer leaves message space rather than consuming the screen");
         check(ui(()->draft.getWidth())>=dp(100),label+" draft retains a useful at-least-100dp typing width");
         check(ui(()->draft.getHeight())<=Math.max(dp(96),3*ui(()->draft.getLineHeight())+ui(()->draft.getCompoundPaddingTop()+draft.getCompoundPaddingBottom())),label+" draft scrolls within a bounded multiline editor");
-        for(String id:new String[]{"telegram-send","telegram-mic","telegram-attach","telegram-stop-run","telegram-options","telegram-pin-options","telegram-speed","telegram-stop-audio","telegram-nav-chats","telegram-nav-chamber","telegram-nav-environment","telegram-nav-activity","telegram-nav-settings"})readableControl(id,root,label);
+        for(String id:new String[]{"telegram-send","telegram-send-mode","telegram-mic","telegram-attach","telegram-stop-run","telegram-options","telegram-pin-options","telegram-speed","telegram-stop-audio","telegram-nav-chats","telegram-nav-chamber","telegram-nav-environment","telegram-nav-activity","telegram-nav-settings"})readableControl(id,root,label);
         float configured=activity.getResources().getConfiguration().fontScale;
         if(flag("requireFont150"))check(configured>=1.49f,"Android native system font is actually enlarged to 150 percent");
     }
@@ -250,6 +319,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(ui(()->backgroundClass(message,"org.omega.dracowatch.telegram.MessageDrawable")),"message cell uses actual Telegram bubble path renderer");
             TextView full=ui(()->exactText(message,LONG_TEXT));check(full!=null&&ui(()->full.isTextSelectable()),"full exact public message is selectable, not preview-only");
             check(ui(()->full.getEllipsize())==null&&ui(()->full.getMaxLines())>1000,"full report is not visually ellipsized or line-clamped");
+            identityModesAndInlineEvidence();
             localRequestsAndDates();
             check(ui(()->requireTag("telegram-pinned-banner").getVisibility())==View.VISIBLE,"native pin banner is visible with retained pins");
             int beforeDraft=actions.size();EditText draft=(EditText)requireTag("telegram-draft");ui(()->{draft.requestFocus();draft.setText("EXACT NEW SYNTHETIC DRAFT\nKeep every character.");return null;});
