@@ -58,7 +58,7 @@
       const cols=w>600?3:2,rows=6/cols,gap=12,pad=14,cw=(w-pad*2-gap*(cols-1))/cols,ch=(h-pad*2-gap*(rows-1))/rows;this.hits=[];
       for(const [i,spec] of SPECS.entries()){const x=pad+(i%cols)*(cw+gap),y=pad+Math.floor(i/cols)*(ch+gap),actor=this.actors.get(spec.id)||{x:-14,status:'unknown',observed:false};this.hits.push({id:spec.id,x,y,w:cw,h:ch});const selected=this.selected===spec.id;
         ctx.fillStyle=selected?spec.color+'16':'#111';ctx.strokeStyle=selected?spec.color:'#555';ctx.lineWidth=selected?2:1;ctx.beginPath();ctx.roundRect(x,y,cw,ch,12);ctx.fill();ctx.stroke();
-        ctx.fillStyle=spec.color;ctx.fillRect(x+12,y+12,4,18);ctx.font='800 16px system-ui';ctx.textAlign='left';ctx.fillText(spec.name,x+24,y+26);ctx.font='12px system-ui';ctx.fillStyle='#ddd';ctx.fillText(stateLabel(actor.status)+(actor.status!=='unknown'&&spec.temporary?' · TEMP':''),x+14,y+44);
+        ctx.fillStyle=spec.color;ctx.fillRect(x+12,y+12,4,18);ctx.font='800 16px system-ui';ctx.textAlign='left';ctx.fillText(spec.name,x+24,y+26);ctx.font='12px system-ui';ctx.fillStyle='#ddd';ctx.fillText(stateLabel(actor.status),x+14,y+44);
         const floorY=y+ch-22,centerX=x+cw/2;ellipse(ctx,centerX,floorY,cw*.32,10,'#030303',actor.observed?spec.color+'aa':'#555',1.5);
         ctx.save();ctx.globalAlpha=actor.observed?1:.5;const bob=this.live&&this.motion&&actor.status==='active'?Math.sin(time/400+i)*1.2:0;const scale=Math.max(.22,Math.min(.69,(ch-62)/152));robot(ctx,spec,centerX+actor.x,floorY-69*scale+bob,scale,time,this.live&&this.motion&&actor.status==='active');ctx.restore();
         if(actor.status==='queued'&&this.live){ctx.font='700 18px system-ui';ctx.fillStyle='#ffae00';ctx.textAlign='right';ctx.fillText('•••',x+cw-12,y+44);}

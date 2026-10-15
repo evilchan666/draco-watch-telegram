@@ -71,14 +71,14 @@
       typeof row.body.text==='string' && row.body.text.length<=500000 && ['pending','accepted','uncertain','rejected'].includes(row.state))
       .map(row=>{
         const note=pinText(row.note,800),queued=row.outcome?.status==='queued'||row.outcome?.disposition==='queued';
-        const admission=({pending:'Sending · gateway admission not yet confirmed',
+        const admission=row.body.mode==='steer'&&row.outcome?.steering?row.note:({pending:'Sending · gateway admission not yet confirmed',
           accepted:queued?'Gateway admitted · queued follow-up':'Gateway admission acknowledged',
           uncertain:'Admission unconfirmed · original request saved',rejected:'Request rejected · admission not confirmed'})[row.state];
         return {id:row.id,agent,sessionId,role:'user',kind:'Local request',text:row.body.text,
           timestamp:pinTime(row.at)?row.at:0,localSubmission:true,submissionState:row.state,
           submissionNote:admission+'. Reading, start, reply and completion are not established.'+
             (['uncertain','rejected'].includes(row.state)&&note?' '+note:''),
-          attachmentNote:Array.isArray(row.body.attachmentIds)&&row.body.attachmentIds.length?
+          noReplay:row.body.mode==='steer',attachmentNote:Array.isArray(row.body.attachmentIds)&&row.body.attachmentIds.length?
             'Attachment submission · '+row.body.attachmentIds.length+' saved attachment IDs; delivered contents unconfirmed':'',
           source:'device-local-submission',publicAttested:false,replyAvailable:false,canPin:false,canReply:false,canRead:false,media:[]};
       });
@@ -164,7 +164,8 @@
       const seen=new Set();this.data.attachments=(Array.isArray(rows)?rows:[]).filter(row=>row&&AGENTS.includes(row.agent)&&typeof row.id==='string'&&row.id.length<=160&&!seen.has(row.id)&&(seen.add(row.id),true)).slice(0,48).map(row=>({id:row.id,agent:row.agent,state:'ready',name:String(row.name||'Attachment').slice(0,240),mimeType:String(row.mimeType||'application/octet-stream').slice(0,120),sizeBytes:Math.max(0,Number(row.sizeBytes)||0),durationMs:Math.max(0,Number(row.durationMs)||0)}));
       return persist?this.save():true;
     }
-    unresolved(agent) { return this.data.outbox.find(row => row.agent === agent && ['pending','uncertain'].includes(row.state)); }
+    unresolved(agent) { return this.data.outbox.find(row => row.agent === agent && ['pending','uncertain'].includes(row.state)&&
+      !(row.body.mode==='steer'&&['accepted','rejected','indeterminate'].includes(row.outcome?.steering?.status))); }
     begin(agent,path,body) {
       if (this.unresolved(agent)) throw Error('An earlier submission needs its exact-ID acknowledgement.');
       const row = {id:body.idempotencyKey,agent,path,body:JSON.parse(JSON.stringify(body)),state:'pending',at:Date.now(),note:'Waiting for gateway acknowledgement'};
@@ -174,12 +175,14 @@
     }
     retry(id) {
       const row = this.data.outbox.find(entry => entry.id === id);
+      if(row?.body.mode==='steer')throw Error('Do not replay Steer. Its original target-bound receipt is checked through the live feed.');
       if (!row || row.state !== 'uncertain') throw Error('Only the original unconfirmed submission can be retried.');
       row.hasUnconfirmedAttempt = true; row.state = 'pending'; row.note = 'Checking the original submission ID'; if (!this.save()) { row.state = 'uncertain'; throw Error('The original submission custody could not be saved. Nothing was retried.'); }
       return {...row.body,retry:true};
     }
     result(id,{ok,data,error,uncertain}={}) {
       const row = this.data.outbox.find(entry => entry.id === id); if (!row) return null;
+      if(row.body.mode==='steer'&&data?.strictSteer===true){this.steeringResult(data);return row;}
       // A late retry failure cannot undo an authoritative original-ID acceptance.
       if (row.state === 'accepted') return row;
       const notDispatched = data?.dispatched === false || data?.status === 'not-dispatched';
@@ -194,6 +197,27 @@
         row.note = String(error || data?.error || data?.reason || 'Acceptance is unconfirmed. Keep the original request ID.').slice(0,800);
       }
       this.save(); return row;
+    }
+    steeringResult(value) {
+      const row=this.data.outbox.find(entry=>entry.id===value?.id),s=value?.steering?{...value.steering}:null;
+      if(!row||row.path!=='/v1/message'||row.body.mode!=='steer'||value.strictSteer!==true||value.agent!==row.agent||
+        value.sessionKey!==conversationKey(row.agent)||value.sessionId!==row.body.sessionId||value.runId!==row.id||value.requestedRunId!==row.body.runId||
+        s?.expectedRunId!==row.body.runId||s.replayAllowed!==false||!['pending','accepted','rejected','indeterminate'].includes(s.status)||
+        s.targetRunId!==undefined&&s.targetRunId!==row.body.runId||s.status==='accepted'&&s.targetRunId!==row.body.runId||s.status==='accepted'&&s.submitted===false)return null;
+      const previous=row.outcome?.steering;
+      if(previous&&previous.status!=='pending'){
+        if(s.status==='pending'||previous.status===s.status)return row;
+        s.status='indeterminate';delete s.targetRunId;delete s.submitted;
+      }
+      const steering={expectedRunId:s.expectedRunId,status:s.status,replayAllowed:false,
+        ...(s.targetRunId?{targetRunId:s.targetRunId}:{}),...(typeof s.submitted==='boolean'?{submitted:s.submitted}:{})};
+      row.outcome={id:row.id,agent:row.agent,sessionKey:value.sessionKey,sessionId:value.sessionId,runId:row.id,requestedRunId:row.body.runId,
+        strictSteer:true,steering,completed:false,replayAllowed:false};
+      row.state=s.status==='accepted'?'accepted':s.status==='rejected'?'rejected':'uncertain';
+      row.note=({pending:'Steer admission observed; selected-run adoption not yet confirmed. Do not replay.',accepted:'Selected run adopted this input. Reply and completion remain unconfirmed.',
+        rejected:'Selected-run Steer rejected. No Queue fallback or replay.',indeterminate:'Selected-run adoption indeterminate. Do not replay; original request retained.'})[s.status];
+      if(s.status==='accepted'&&this.draft(row.agent)===row.body.text)this.data.drafts[row.agent]='';
+      this.save();return row;
     }
     // Pins are user-selected local snapshots, not server pins, fresh history or
     // authorization to act/speak. The caller supplies an already loaded public
