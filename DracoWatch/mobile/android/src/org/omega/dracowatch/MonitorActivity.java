@@ -215,7 +215,10 @@ public final class MonitorActivity extends Activity {
     // The optional explicit flag lets HTML dialogs leave immersive mode too.
     // Never infer a world from a missing/malformed native-surface payload.
     static boolean worldMode(JSONObject payload){return payload!=null&&Boolean.FALSE.equals(payload.opt("chat"))&&"environment".equals(payload.optString("view"))&&Boolean.FALSE.equals(payload.opt("visible"))&&(!payload.has("world")||Boolean.TRUE.equals(payload.opt("world")));}
-    private void updateWorldImmersive(){setWorldImmersive(worldRequested&&active&&!destroyed&&hasWindowFocus()&&!keyboardVisible);}
+    // A transient SystemUI overlay (including immersive education) can take focus
+    // without leaving the world. Restoring bars there causes an education/focus
+    // loop. Real world/chat/IME/lifecycle transitions own chrome restoration.
+    private void updateWorldImmersive(){setWorldImmersive(worldRequested&&active&&!destroyed&&!keyboardVisible);}
     private void setWorldImmersive(boolean immersive){
         if(worldImmersive==immersive)return;Window window=getWindow();if(window==null)return;View decor=window.getDecorView();
         WindowInsetsController controller=Build.VERSION.SDK_INT>=30?window.getInsetsController():null;if(Build.VERSION.SDK_INT>=30&&controller==null)return;
@@ -237,7 +240,7 @@ public final class MonitorActivity extends Activity {
         // separately for its interactive HUD; native chat/IME retain margins.
         decor.requestApplyInsets();
     }
-    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);updateWorldImmersive();}
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);lifecycle(active&&focused);updateWorldImmersive();}
 
     private void pickAttachment(String agent){if(!active||transferring||recorder!=null||pickerOpen||!DracoClient.AGENTS.contains(agent))return;pickerAgent=agent;pickerOpen=true;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.setType("*/*");intent.addCategory(Intent.CATEGORY_OPENABLE);intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);startActivityForResult(intent,PICK);}
     private void importUri(Uri uri,String agent){if(uri==null||transferring||!DracoClient.AGENTS.contains(agent))return;attachmentEvent(agent,"importing",null,null,0,0,null,null);
