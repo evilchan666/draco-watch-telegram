@@ -18,6 +18,7 @@ mkdir -p "$output_root/classes" "$output_root/dex"
     "$native_root/src/org/omega/dracowatch/MonitorActivity.java" \
     "$native_root/tests/src/org/omega/dracowatch/TelegramBridgeChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/TelegramSurfaceChecks.java" \
+    "$native_root/tests/src/org/omega/dracowatch/NativeComposerChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/NativeChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/AudioPolicyChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/WorkStreamChecks.java" \
@@ -25,6 +26,7 @@ mkdir -p "$output_root/classes" "$output_root/dex"
     "$native_root/tests/src/org/omega/dracowatch/AcceptedAudioChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/ViewportEvidenceChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/WorldChecks.java" \
+    "$native_root/tests/src/org/omega/dracowatch/WorkspaceChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/ConnectionChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/CompetingAudioActivity.java" \
     "$native_root/tests/src/org/omega/dracowatch/CompetingAudioService.java"

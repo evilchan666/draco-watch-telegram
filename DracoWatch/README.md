@@ -7,7 +7,21 @@ It is a bounded native component integration, not a Telegram login/transport
 migration or full Telegram ChatActivity parity. Watch's authenticated backend,
 original black/red identity, per-agent accents and existing spatial views remain.
 
-## 0.3.2
+## 0.7.0 retained-world workspace candidate
+
+The full existing native conversation is now a panel inside the first-person
+workspace: bottom-docked in portrait, alongside the world in landscape. Text,
+voice/file preparation, replies, pins and supported exact-run actions retain
+their existing authenticated session and original-request custody. Native
+draft/file/outbox review no longer sends routine work to a second composer.
+Movement is explicitly paused while communicating; Explore restores it.
+
+See [the interaction guide](mobile/GUIDE-070.md). SOURCE.json records the exact
+Watch source, packaging/publication state and preserved 0.6.0 baseline. Android
+fixture results do not establish physical S25 connectivity or acceptance. This
+does not claim full upstream Telegram chat-stack parity or change room geometry.
+
+## Historical 0.3.2 record
 
 0.3.2/code21 is published to the authenticated private updater. Phone installation
 and usability remain unverified. See the [full version guide](GUIDE-032.md),

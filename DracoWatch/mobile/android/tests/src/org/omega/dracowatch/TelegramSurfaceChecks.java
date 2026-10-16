@@ -386,7 +386,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(exactScope(action,"atlas")&&"workflow-exact-run".equals(action.getJSONObject("data").optString("runId")),"durable Stop dispatches only captured exact session/run");
             can.put("durableStop",false);render(model);
             check("Abort run".equals(((TextView)requireTag("telegram-stop-run")).getText().toString()),"capability loss immediately reverts to honest run-only Abort");
-            can.put("abort",false);render(model);before=actions.size();click(requireTag("telegram-stop-run"));
+            can.put("abort",false);render(model);check("Stop unavailable".equals(((TextView)requireTag("telegram-stop-run")).getText().toString()),"unsupported exact-run control is visibly labelled unavailable");before=actions.size();click(requireTag("telegram-stop-run"));
             check(event(before,"stop")==null,"revoked Abort cannot dispatch even from a visible native button");
             can.put("abort",true).put("durableStop",true);
         }
@@ -544,7 +544,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             JSONObject recording=base(true,"atlas");recording.put("recording",true);render(recording);int beforeRecordStop=actions.size();click(requireTag("telegram-mic"));
             check(exactScope(event(beforeRecordStop,"recordStop"),"atlas")&&event(beforeRecordStop,"record")==null,"active recording microphone stops exact-scope recording even when new-record capability is false");
             JSONObject staged=base(true,"atlas");staged.put("attachments",new JSONArray().put(json("id","synthetic-file","name","Retained staged file.txt","state","ready")));render(staged);int beforeComposer=actions.size();click(requireTag("telegram-pending"));
-            check(exactScope(event(beforeComposer,"composer"),"atlas")&&event(beforeComposer,"tools")==null,"pending attachment opens complete exact-scope composer rather than unrelated action modal");
+            check(event(beforeComposer,"composer")==null&&event(beforeComposer,"tools")==null&&findNode("Draft, files & outbox")!=null,"pending attachment opens native custody review without leaving the conversation");dialogChoice("Close");
             render(base(true,"atlas"));int beforeAdvanced=actions.size();click(requireTag("telegram-options"));dialogChoice("Advanced conversation controls");
             check(exactScope(event(beforeAdvanced,"tools"),"atlas"),"explicit Advanced conversation controls retains existing tools-dialog action");
             int beforeControls=actions.size();openRunOptions();dialogChoice("Steer unavailable · not dispatched");check(event(beforeControls,"send")==null,"unsupported Steer cannot silently queue or send");

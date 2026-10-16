@@ -814,3 +814,81 @@ body[data-world-handedness=left] .world-interact { right: auto; left: max(16px,v
  .world-operation-body { grid-area: reading; border-left: 1px solid #819aac29; }
  .world-operation-actions { grid-area: actions; }
 }
+
+/* The conversation is part of the operating space, not another destination.
+   Native Android lays out the identical full-feature surface over this slot. */
+body[data-view=environment].chat-open .app-shell { visibility: visible; padding: 0; max-width: none; min-height: 0; }
+body[data-view=environment].chat-open .app-header,
+body[data-view=environment].chat-open .connection-bar,
+body[data-view=environment].chat-open .bottom-nav,
+body[data-view=environment].chat-open .environment-caption,
+body[data-view=environment].chat-open .environment-toolbar,
+body[data-view=environment].chat-open .spatial-sidebar,
+body[data-view=environment].chat-open .environment-note,
+body[data-view=environment].chat-open .connection-notice { display: none !important; }
+body[data-view=environment] { --world-panel-width: clamp(340px,56vw,calc(100vw - 200px)); --world-panel-height: 64dvh; }
+.world-workspace-bar { position: absolute; z-index: 6; inset: max(66px,calc(var(--world-safe-top,0px) + 56px)) 14px auto; max-width: 860px; margin-inline: auto; padding: 9px 10px 7px; border: 1px solid #9fb4c42e; border-radius: 12px; color: #e4edf5; background: #081019e8; box-shadow: 0 6px 24px #0004; }
+.world-workspace-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.world-workspace-head > strong { color: #a9bdca; letter-spacing: .14em; font-size: .54rem; font-weight: 600; }
+.world-workspace-modes { display: flex; gap: 3px; padding: 2px; border-radius: 7px; background: #ffffff05; }
+.world-workspace-mode { min-height: 36px; padding: 5px 9px; border: 0; border-radius: 5px; background: none; color: #a5b8c8; font-size: .59rem; }
+.world-workspace-mode[aria-pressed=true] { color: #f0f5fa; background: #324558; }
+.world-contacts { display: flex; gap: 5px; min-width: 0; overflow-x: auto; scrollbar-width: thin; overscroll-behavior-x: contain; scroll-padding-inline: 3px; }
+.world-contact { flex: 1 0 auto; min-width: 88px; min-height: 48px; padding: 6px 9px; border: 1px solid #91a6b62e; border-radius: 7px; background: #101c27; color: #bbc9d4; display: grid; grid-template-columns: 6px auto; gap: 2px 7px; text-align: start; }
+.world-contact-dot { grid-row: 1 / 3; align-self: center; width: 5px; height: 5px; border-radius: 50%; background: var(--agent); }
+.world-contact-name { font-size: .65rem; line-height: 1.25; white-space: nowrap; }
+.world-contact-state { font-size: .48rem; line-height: 1.25; color: #90a3b3; white-space: nowrap; }
+.world-contact[aria-pressed=true] { color: var(--agent); border-color: color-mix(in srgb,var(--agent) 65%,#435362); background: #1b2a38; }
+.world-workspace-status { margin: 6px 1px 0; font-size: .5rem; line-height: 1.3; color: #9eb3c4; overflow-wrap: anywhere; }
+.world-workspace-brief { position: absolute; z-index: 5; left: max(16px,var(--world-safe-left,0px)); bottom: max(174px,calc(var(--world-safe-bottom,0px) + 160px)); width: min(340px,calc(100vw - 32px)); padding: 12px 14px; border-left: 2px solid var(--agent); border-radius: 0 9px 9px 0; background: #08111ae8; color: #d9e5ee; }
+.world-workspace-brief > strong { display: block; color: var(--agent); font-size: .65rem; line-height: 1.4; }
+.world-workspace-brief > p { margin: 5px 0 8px; font-size: .68rem; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: pre-wrap; }
+.world-brief-open { border: 0; min-height: 36px; padding: 5px 0; background: none; color: #dcebf4; font-size: .6rem; text-align: start; }
+.world-fallback-expand { display: none; }
+body.world-docked .conversation-screen { inset: auto max(0px,var(--world-safe-right,0px)) max(0px,var(--world-safe-bottom,0px)) max(0px,var(--world-safe-left,0px)); width: auto; height: var(--world-panel-height); max-width: none; margin: 0; padding: 0; border: 1px solid #9bb3c447; border-top: 2px solid var(--selected); border-radius: 14px 14px 0 0; box-shadow: 0 -12px 48px #0006; background: #08111a; }
+body.world-docked .world-fallback-expand { display: block; position: absolute; right: 8px; top: 8px; z-index: 12; width: 44px; height: 40px; padding: 0; overflow: hidden; font-size: 0; border: 1px solid #607585; border-radius: 6px; background: #172535; }
+body.world-docked .world-fallback-expand::before { content: '⛶'; font-size: 21px; color: #dcebf5; }
+body.world-docked .chat-header { padding-right: 56px; }
+body.world-docked #environment-canvas { height: calc(100dvh - var(--world-panel-height)); }
+body.world-docked .world-workspace-bar { inset: max(8px,var(--world-safe-top,0px)) 10px auto; display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 6px; padding: 7px 8px; }
+body.world-docked .world-workspace-head { margin: 0; }
+body.world-docked .world-workspace-head > strong,
+body.world-docked #world-workspace-talk,
+body.world-docked .world-contact-state { display: none; }
+body.world-docked .world-contact { min-width: 78px; grid-template-columns: 5px auto; min-height: 44px; }
+body.world-docked .world-contact-dot { grid-row: 1; }
+body.world-docked .world-workspace-mode { min-height: 44px; }
+body.world-docked .world-workspace-status { grid-column: 1 / -1; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+body.world-docked .world-top,
+body.world-docked .world-interact,
+body.world-docked .world-walk,
+body.world-docked .world-target,
+body.world-docked .world-hint,
+body.world-docked .world-reticle,
+body.world-docked .world-local-body,
+body.world-docked .world-workspace-brief,
+body.world-docked .spatial-label { display: none !important; }
+body.world-expanded .conversation-screen { inset: max(0px,var(--world-safe-top,0px)) max(0px,var(--world-safe-right,0px)) max(0px,var(--world-safe-bottom,0px)) max(0px,var(--world-safe-left,0px)); width: auto; height: auto; border-radius: 0; }
+body.world-expanded .world-workspace-bar { visibility: hidden; }
+@media (orientation:landscape) and (min-width:600px) {
+ body.world-docked .conversation-screen { inset: max(0px,var(--world-safe-top,0px)) max(0px,var(--world-safe-right,0px)) max(0px,var(--world-safe-bottom,0px)) auto; width: var(--world-panel-width); height: auto; border-radius: 12px 0 0 12px; border-left: 2px solid var(--selected); border-top-width: 1px; }
+ body.world-docked #environment-canvas { width: calc(100vw - var(--world-panel-width)); height: 100%; }
+ body.world-docked .world-workspace-bar { right: calc(var(--world-panel-width) + 10px); left: max(10px,var(--world-safe-left,0px)); }
+ body.world-docked .world-workspace-head { flex-wrap: nowrap; }
+ body.world-docked .world-workspace-head > strong { display: none; }
+ body.world-docked .world-contact { min-width: 78px; }
+ body.world-expanded .conversation-screen { inset: max(0px,var(--world-safe-top,0px)) max(0px,var(--world-safe-right,0px)) max(0px,var(--world-safe-bottom,0px)) max(0px,var(--world-safe-left,0px)); width: auto; border-radius: 0; }
+ .world-workspace-brief { bottom: max(150px,calc(var(--world-safe-bottom,0px) + 135px)); max-width: 30vw; }
+}
+@media (max-height:500px) {
+ body:not(.world-docked) .world-workspace-bar { top: max(56px,calc(var(--world-safe-top,0px) + 44px)); padding-block: 5px; }
+ body:not(.world-docked) .world-workspace-head { display: none; }
+ body:not(.world-docked) .world-workspace-status { display: none; }
+ body:not(.world-docked) .world-workspace-brief { display: none; }
+ body.world-docked .world-workspace-status { font-size: .48rem; }
+}
+@media (orientation:portrait) and (max-height:600px) {
+ body.world-docked { --world-panel-height: 76dvh; }
+ body.world-docked .world-workspace-head { display: none; }
+ body.world-docked .world-workspace-status { display: none; }
+}

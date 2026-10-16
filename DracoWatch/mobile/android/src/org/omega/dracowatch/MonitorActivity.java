@@ -73,8 +73,10 @@ public final class MonitorActivity extends Activity {
             int left,top,right,bottom;boolean keyboard=false;
             if(Build.VERSION.SDK_INT>=30){android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
                 android.graphics.Insets ime=insets.getInsets(WindowInsets.Type.ime());left=bars.left;top=bars.top;right=bars.right;bottom=Math.max(bars.bottom,ime.bottom);keyboard=insets.isVisible(WindowInsets.Type.ime());}
-            else{left=insets.getSystemWindowInsetLeft();top=insets.getSystemWindowInsetTop();right=insets.getSystemWindowInsetRight();bottom=insets.getSystemWindowInsetBottom();}
-            boolean fullBleed=worldImmersive&&!keyboard;
+            else{left=insets.getSystemWindowInsetLeft();top=insets.getSystemWindowInsetTop();right=insets.getSystemWindowInsetRight();bottom=insets.getSystemWindowInsetBottom();keyboard=bottom>Math.round(120*getResources().getDisplayMetrics().density);}
+            // The retained world stays edge-to-edge even with its native dock
+            // and IME open. Only native controls receive safe/keyboard margins.
+            boolean fullBleed=worldRequested;
             FrameLayout.LayoutParams params=(FrameLayout.LayoutParams)web.getLayoutParams();
             int webLeft=fullBleed?0:left,webTop=fullBleed?0:top,webRight=fullBleed?0:right,webBottom=fullBleed?0:bottom;
             if(params.leftMargin!=webLeft||params.topMargin!=webTop||params.rightMargin!=webRight||params.bottomMargin!=webBottom){params.setMargins(webLeft,webTop,webRight,webBottom);web.setLayoutParams(params);}
@@ -119,7 +121,7 @@ public final class MonitorActivity extends Activity {
     private final class Bridge {
         @JavascriptInterface public void renderTelegram(String json){
             if(json==null||json.length()>3000000)return;
-            try{JSONObject payload=new JSONObject(json);main.post(()->{if(!destroyed&&telegram!=null){telegram.render(payload);worldRequested=worldMode(payload);updateWorldImmersive();}});}catch(JSONException ignored){}
+            try{JSONObject payload=new JSONObject(json);main.post(()->{if(!destroyed&&telegram!=null){boolean nextWorld=worldMode(payload);boolean worldChanged=nextWorld!=worldRequested;worldRequested=nextWorld;telegram.render(payload);updateWorldImmersive();if(worldChanged)web.requestApplyInsets();}});}catch(JSONException ignored){}
         }
         @JavascriptInterface public void notifyTelegram(String text){main.post(()->{if(telegram!=null&&telegram.showing()&&text!=null&&text.length()<=2000)Toast.makeText(MonitorActivity.this,text,Toast.LENGTH_LONG).show();});}
 
@@ -253,11 +255,34 @@ public final class MonitorActivity extends Activity {
     private void lifecycle(boolean value){if(loaded&&!destroyed)web.evaluateJavascript("if(typeof window.onDracoLifecycle==='function')window.onDracoLifecycle({active:"+value+"});",null);}
     // The optional explicit flag lets HTML dialogs leave immersive mode too.
     // Never infer a world from a missing/malformed native-surface payload.
-    static boolean worldMode(JSONObject payload){return payload!=null&&Boolean.FALSE.equals(payload.opt("chat"))&&"environment".equals(payload.optString("view"))&&Boolean.FALSE.equals(payload.opt("visible"))&&(!payload.has("world")||Boolean.TRUE.equals(payload.opt("world")));}
+    static boolean worldMode(JSONObject payload){
+        if(payload==null||!"environment".equals(payload.optString("view"))||payload.has("world")&&!Boolean.TRUE.equals(payload.opt("world")))return false;
+        boolean ordinaryWorld=Boolean.FALSE.equals(payload.opt("chat"))&&Boolean.FALSE.equals(payload.opt("visible"));
+        boolean dockWorld=Boolean.TRUE.equals(payload.opt("chat"))
+            &&Boolean.TRUE.equals(payload.opt("worldDock"))&&Boolean.TRUE.equals(payload.opt("world"));
+        return ordinaryWorld||dockWorld;
+    }
     // A transient SystemUI overlay (including immersive education) can take focus
     // without leaving the world. Restoring bars there causes an education/focus
     // loop. Real world/chat/IME/lifecycle transitions own chrome restoration.
-    private void updateWorldImmersive(){setWorldImmersive(worldRequested&&active&&!destroyed&&!keyboardVisible);}
+    private void updateWorldImmersive(){
+        // Cutout ownership follows the visible world, not keyboard visibility.
+        // Restoring cutout policy for IME focus used to resize the world itself.
+        setWorldCutout(worldRequested&&active&&!destroyed);
+        setWorldImmersive(worldRequested&&active&&!destroyed&&!keyboardVisible);
+    }
+    private void setWorldCutout(boolean enabled){
+        if(Build.VERSION.SDK_INT<28)return;Window window=getWindow();if(window==null)return;
+        WindowManager.LayoutParams attrs=window.getAttributes();
+        if(enabled&&!worldCutoutChanged){
+            int mode=attrs.layoutInDisplayCutoutMode;
+            if(mode==WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                ||Build.VERSION.SDK_INT>=30&&mode==WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS)return;
+            savedCutoutMode=mode;worldCutoutChanged=true;
+            attrs.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            window.setAttributes(attrs);
+        }else if(!enabled&&worldCutoutChanged){attrs.layoutInDisplayCutoutMode=savedCutoutMode;window.setAttributes(attrs);worldCutoutChanged=false;}
+    }
     private void setWorldImmersive(boolean immersive){
         if(worldImmersive==immersive)return;Window window=getWindow();if(window==null)return;View decor=window.getDecorView();
         WindowInsetsController controller=Build.VERSION.SDK_INT>=30?window.getInsetsController():null;if(Build.VERSION.SDK_INT>=30&&controller==null)return;
@@ -271,10 +296,6 @@ public final class MonitorActivity extends Activity {
             }else{controller.setSystemBarsBehavior(savedBarsBehavior);controller.show(savedVisibleBars);controller.hide(bars&~savedVisibleBars);}
         }else{if(immersive){savedSystemUiVisibility=decor.getSystemUiVisibility();decor.setSystemUiVisibility(savedSystemUiVisibility|View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);}
             else decor.setSystemUiVisibility(savedSystemUiVisibility);}
-        if(Build.VERSION.SDK_INT>=28){WindowManager.LayoutParams attrs=window.getAttributes();if(immersive){savedCutoutMode=attrs.layoutInDisplayCutoutMode;
-                worldCutoutChanged=savedCutoutMode!=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES&&(Build.VERSION.SDK_INT<30||savedCutoutMode!=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS);
-                if(worldCutoutChanged){attrs.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;window.setAttributes(attrs);}
-            }else if(worldCutoutChanged){attrs.layoutInDisplayCutoutMode=savedCutoutMode;window.setAttributes(attrs);worldCutoutChanged=false;}}
         // Only the world's WebView is full bleed. Raw safe insets are delivered
         // separately for its interactive HUD; native chat/IME retain margins.
         decor.requestApplyInsets();
@@ -392,6 +413,6 @@ public final class MonitorActivity extends Activity {
     @Override protected void onResume(){super.onResume();active=true;updateWorldImmersive();if(web!=null){web.onResume();web.resumeTimers();lifecycle(true);drainCallbacks();}resumeMicrophoneStart();if(resumeInstall){resumeInstall=false;updater.install();}else if(loaded){refresh(latestAgent);updater.check(false);}}
     @Override protected void onPause(){active=false;updateWorldImmersive();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(diagnostics!=null)diagnostics.record("lifecycle","paused");finishRecording(false);stopPlayback();lifecycle(false);if(web!=null){web.onPause();web.pauseTimers();}super.onPause();}
     @Override protected void onDestroy(){destroyed=true;active=false;worldRequested=false;updateWorldImmersive();if(connectionDialog!=null)connectionDialog.dismiss();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(Thread.getDefaultUncaughtExceptionHandler()==crashHandler)Thread.setDefaultUncaughtExceptionHandler(previousCrashHandler);microphonePermissionPending=false;pendingMicrophoneStart=false;updater.close();finishRecording(true);stopPlayback();workers.shutdownNow();interactiveWorkers.shutdownNow();readWorkers.shutdownNow();observationWorkers.shutdownNow();if(web!=null){web.removeJavascriptInterface("DracoNative");web.destroy();}super.onDestroy();}
-    @Override public void onConfigurationChanged(Configuration configuration){super.onConfigurationChanged(configuration);if(web!=null){web.getSettings().setTextZoom(systemTextZoom());appInfo();}}
+    @Override public void onConfigurationChanged(Configuration configuration){super.onConfigurationChanged(configuration);if(telegram!=null)telegram.configurationChanged();if(web!=null){web.getSettings().setTextZoom(systemTextZoom());appInfo();}}
     @Override public void onBackPressed(){if(recorder!=null){finishRecording(false);return;}if(telegram!=null&&telegram.showing()&&telegram.back())return;if(web!=null){web.evaluateJavascript("Boolean(window.DracoWatch&&typeof window.DracoWatch.back==='function'&&window.DracoWatch.back())",value->{if(!"true".equals(value))finish();});return;}super.onBackPressed();}
 }

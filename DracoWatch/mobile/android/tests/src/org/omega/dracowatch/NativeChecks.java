@@ -63,6 +63,11 @@ public final class NativeChecks extends Instrumentation {
         worldPayload.put("chat",true);check(!MonitorActivity.worldMode(worldPayload),"opening a chat leaves immersive mode even if a stale explicit world flag remains true");worldPayload.put("chat",false);
         worldPayload.put("visible",true);check(!MonitorActivity.worldMode(worldPayload),"a visible native surface cannot be hidden under immersive world chrome");worldPayload.put("visible",false);
         worldPayload.put("view","settings");check(!MonitorActivity.worldMode(worldPayload),"settings and other non-world destinations retain normal Android chrome");
+        JSONObject worldDock=new JSONObject().put("view","environment").put("chat",true).put("visible",true).put("worldDock",true).put("world",true);
+        check(MonitorActivity.worldMode(worldDock),"explicit full-feature conversation dock retains world ownership");
+        worldDock.put("visible",false);check(MonitorActivity.worldMode(worldDock),"full-text fallback retains world ownership independently of native visibility");
+        worldDock.put("world",false);check(!MonitorActivity.worldMode(worldDock),"a dialog or explicit world-off also overrides the conversation dock");
+        worldDock.put("world",true).put("worldDock",false);check(!MonitorActivity.worldMode(worldDock),"ordinary chat cannot accidentally request retained-world chrome");
         check(PrivateMediaProvider.support("support-diagnostics-12345678-1234-1234-1234-123456789abc.json")&&!PrivateMediaProvider.support("../native-diagnostics.json")&&!PrivateMediaProvider.support("support-diagnostics.json"),"support-file export provider accepts generated fixed-prefix names, not arbitrary private paths");
         check(DracoClient.permitted("POST","/v1/message"),"explicit message");
         check(DracoClient.permitted("POST","/v1/abort"),"exact abort");

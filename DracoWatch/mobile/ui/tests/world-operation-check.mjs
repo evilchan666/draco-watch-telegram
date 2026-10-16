@@ -163,7 +163,7 @@ try{
       await evaluate(`document.querySelector('.world-menu-button').click();document.querySelector('.world-agent[data-agent="${id}"]').click()`);await sleep(120);
       if(spec.name==='portrait')await screenshot('agent-'+id);
       const saved=await pose();await evaluate("document.getElementById('world-talk').click()");await wait(`__lastRender.chat===true&&__lastRender.agent==='${id}'&&__lastRender.can.attachments===true&&__lastRender.can.voice===true`);
-      check(await evaluate(`__lastRender.sessionId===__sessions['${id}']&&__lastRender.can.voice&&__lastRender.can.attachments&&Array.isArray(__lastRender.pins)&&Array.isArray(__lastRender.work)&&__lastRender.world===false`),spec.name+': '+id+' opens full session-bound native conversation');
+      check(await evaluate(`__lastRender.sessionId===__sessions['${id}']&&__lastRender.can.voice&&__lastRender.can.attachments&&Array.isArray(__lastRender.pins)&&Array.isArray(__lastRender.work)&&__lastRender.world===true&&__lastRender.worldDock===true&&__environment.active===true&&__environment.reading===true`),spec.name+': '+id+' opens full session-bound native conversation inside the retained, input-paused world');
       await evaluate("onDracoTelegramAction({action:'composer',data:{agent:__lastRender.agent,sessionId:__lastRender.sessionId}})");await wait("!!document.getElementById('native-return')");
       check(await evaluate("!__lastRender.visible&&document.body.classList.contains('chat-open')"),spec.name+': '+id+' full attachment/outbox composer reachable');
       await evaluate("document.getElementById('command-dialog').showModal();DracoWatch.back()");

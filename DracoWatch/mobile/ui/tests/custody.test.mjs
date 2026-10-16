@@ -27,3 +27,64 @@ test('manual-first migration resets every legacy implicit or on preference once 
     migrated.preferences({automaticSpeech:true,speechPreferenceVersion:2});assert.equal(new State(storage).data.preferences.automaticSpeech,true);
   }
 });
+
+
+test('hold release requires exact acknowledged hold/session and never clears or sends the draft',()=>{
+  const {State,storage}=fixture(),state=new State(storage);state.setDraft('atlas','Keep this unsent');
+  const body={agent:'atlas',sessionKey:'agent:atlas:telegram:direct:8745908879',sessionId:'physical-a',holdId:'displayed-hold',idempotencyKey:'release-original'};
+  state.begin('atlas','/v1/hold/release',body);
+  const receipt={...body,id:body.idempotencyKey,status:'hold-released'};
+  state.result(body.idempotencyKey,{ok:true,data:{...receipt,holdId:'replacement-hold'}});
+  assert.equal(state.unresolved('atlas').state,'uncertain');assert.equal(state.draft('atlas'),'Keep this unsent');
+  state.result(body.idempotencyKey,{ok:true,data:receipt});assert.equal(state.unresolved('atlas'),undefined);
+  assert.equal(state.draft('atlas'),'Keep this unsent');assert.equal(state.data.outbox.length,1);
+});
+
+
+test('explicit hold-release custody coexists with uncertain original input without erasing or replaying it',()=>{
+  const {State,storage}=fixture(),state=new State(storage);state.setDraft('atlas','original text');
+  state.begin('atlas','/v1/message',{agent:'atlas',idempotencyKey:'uncertain-input',text:'original text'});
+  state.result('uncertain-input',{ok:false,error:'Lost input receipt'});
+  const body={agent:'atlas',sessionKey:'agent:atlas:telegram:direct:8745908879',sessionId:'physical-a',holdId:'held-a',idempotencyKey:'release-once'};
+  state.begin('atlas','/v1/hold/release',body);
+  assert.throws(()=>state.begin('atlas','/v1/hold/release',{...body,idempotencyKey:'release-twice'}));
+  assert.throws(()=>state.begin('atlas','/v1/message',{idempotencyKey:'new-input',text:'no duplicate'}));
+  state.result(body.idempotencyKey,{ok:true,data:{...body,id:body.idempotencyKey,status:'hold-released'}});
+  const resumed=new State(storage);assert.equal(resumed.unresolved('atlas').id,'uncertain-input');
+  assert.equal(resumed.unresolvedControl('atlas'),undefined);assert.equal(resumed.draft('atlas'),'original text');
+  assert.equal(resumed.data.outbox.length,2);assert.equal(resumed.data.outbox[0].state,'uncertain');
+});
+
+test('lost Stop acknowledgement cannot deadlock the observed hold release or settle the old Stop',()=>{
+  const {State,storage}=fixture(),state=new State(storage);state.setDraft('atlas','new unsent draft');
+  state.begin('atlas','/v1/abort',{agent:'atlas',sessionId:'physical-a',runId:'old-run',idempotencyKey:'lost-stop',automaticContinuation:'hold'});
+  state.result('lost-stop',{ok:false,error:'Lost Stop acknowledgement',uncertain:true});
+  const body={agent:'atlas',sessionKey:'agent:atlas:telegram:direct:8745908879',sessionId:'physical-a',holdId:'observed-hold',idempotencyKey:'release-lost-stop'};
+  state.begin('atlas','/v1/hold/release',body);
+  assert.throws(()=>state.begin('atlas','/v1/hold/release',{...body,idempotencyKey:'duplicate-release'}));
+  state.result(body.idempotencyKey,{ok:true,data:{...body,id:body.idempotencyKey,status:'hold-released'}});
+  const resumed=new State(storage);assert.equal(resumed.unresolved('atlas').id,'lost-stop');
+  assert.equal(resumed.unresolvedControl('atlas'),undefined);assert.equal(resumed.draft('atlas'),'new unsent draft');
+  assert.equal(resumed.data.outbox.length,2);assert.equal(resumed.data.outbox[0].state,'uncertain');
+});
+
+test('Stop remains independent of unconfirmed input but serializes its own exact-ID control lane',()=>{
+  const {State,storage}=fixture(),state=new State(storage);
+  state.begin('atlas','/v1/message',{agent:'atlas',text:'original',idempotencyKey:'uncertain-original'});
+  state.result('uncertain-original',{ok:false,uncertain:true});
+  const stop={agent:'atlas',runId:'exact-run',idempotencyKey:'explicit-stop'};
+  state.begin('atlas','/v1/abort',stop);
+  assert.throws(()=>state.begin('atlas','/v1/abort',{...stop,idempotencyKey:'second-stop'}));
+  assert.equal(state.data.outbox[0].state,'uncertain');assert.equal(state.data.outbox[1].state,'pending');
+});
+
+test('exact release non-dispatch settles a lost predispatch receipt but a wrong hold cannot',()=>{
+  const {State,storage}=fixture(),state=new State(storage);state.setDraft('atlas','keep draft');
+  const body={agent:'atlas',sessionKey:'agent:atlas:telegram:direct:8745908879',sessionId:'physical-a',holdId:'held-a',idempotencyKey:'release-lost-before-dispatch'};
+  state.begin('atlas','/v1/hold/release',body);state.result(body.idempotencyKey,{ok:false,uncertain:true});
+  const data={...body,id:body.idempotencyKey,status:'not-dispatched',dispatched:false};
+  state.result(body.idempotencyKey,{ok:true,data:{...data,holdId:'wrong'}});
+  assert.equal(state.unresolvedControl('atlas').state,'uncertain');
+  state.result(body.idempotencyKey,{ok:true,data});assert.equal(state.unresolvedControl('atlas'),undefined);
+  assert.equal(state.data.outbox[0].state,'rejected');assert.equal(state.draft('atlas'),'keep draft');
+});

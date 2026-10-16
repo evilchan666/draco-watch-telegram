@@ -75,3 +75,43 @@ test('conflicting namespaced tools sharing a normalized alias cannot be reported
   const start=event(),end=event('result');start.observation.toolName='gateway.exec_command';end.observation.toolName='other.exec_command';
   const s=observe(agent(),[start,end]);assert.equal(s.event,null);assert.match(s.summary,/conflicting call facts withheld/);
 });
+
+test('fresh native phase is separate from tool history and stale phase becomes unknown',()=>{
+  const a=agent();a.runPhase={phase:'working',runId:'current-run',observedAt:now-1000,expiresAt:now+1000};
+  assert.equal(observe(a,[],{coverage:undefined}).execution,'Working');
+  for(const patch of [{runId:'old-run'},{observedAt:now+1},{expiresAt:now},{phase:'invented'}])
+    assert.equal(observe({...a,runPhase:{...a.runPhase,...patch}}).execution,'Execution unknown');
+  assert.equal(observe(a,[],{live:false}).execution,'Execution unknown');
+});
+test('wait phases require the exact current owner; no borrowed background or ambiguous run',()=>{
+  const a=agent();a.runPhase={phase:'input-wait',runId:'current-run',observedAt:now,expiresAt:now+1000};
+  assert.equal(observe(a).execution,'Waiting for input');
+  a.controlTargets.push({...a.controlTargets[0],runId:'second'});
+  assert.equal(observe(a).execution,'Execution unknown');
+});
+test('durable continuation hold remains visible when idle but never crosses a session or disconnect',()=>{
+  const a=agent();a.conversationStatus='idle';a.controlTargets=[];
+  a.continuationHold={id:'hold-1',sessionId:a.sessionId,heldAt:now-10000};
+  assert.equal(observe(a).continuation,'Automatic continuation held');
+  assert.equal(observe(a,[],{live:false}).execution,'Execution unknown');
+  assert.equal(observe({...a,sessionId:'replacement'}).execution,'Execution unknown');
+});
+
+test('native phase without complete control inventory is observable but never creates a control target',()=>{
+  const a=agent();a.controlTargets=[];a.runPhase={phase:'working',runId:'native-owner-run',observedAt:now-100,expiresAt:now+1000};
+  const result=observe(a);assert.equal(result.execution,'Working');assert.equal(result.target,null);assert.equal(conversationTarget(a),null);
+});
+
+test('canonical current-session attestation preserves an inherited hold without borrowing another incarnation',()=>{
+  const a=agent();a.continuationHold={id:'retained-hold',heldAt:now-1000,sessionId:'original',currentSessionId:a.sessionId};
+  assert.equal(observe(a).continuation,'Automatic continuation held');
+  a.continuationHold.currentSessionId='wrong';assert.equal(observe(a).execution,'Execution unknown');
+});
+
+
+test('a durable hold never masks fresh still-running execution or claims cessation',()=>{
+  const a=agent();a.continuationHold={id:'hold-while-working',sessionId:a.sessionId,heldAt:now-50};
+  a.runPhase={phase:'tool-wait',runId:'current-run',observedAt:now-100,expiresAt:now+1000};
+  const observed=observe(a);assert.equal(observed.execution,'Waiting for tool');assert.equal(observed.continuation,'Automatic continuation held');
+  a.runPhase.expiresAt=now;assert.equal(observe(a).execution,'Execution unknown');assert.equal(observe(a).continuation,'Automatic continuation held');
+});

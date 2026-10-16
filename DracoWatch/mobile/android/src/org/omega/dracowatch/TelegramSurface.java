@@ -2,6 +2,7 @@ package org.omega.dracowatch;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
@@ -23,6 +24,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodManager;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.DiffUtil;
 import androidx.recyclerview.widget.ItemTouchHelper;
@@ -104,6 +106,7 @@ public final class TelegramSurface extends FrameLayout {
     private final BackDrawable backDrawable;
     private final TextView title;
     private final TextView subtitle;
+    private final Button worldExpand;
     private final Button runStop;
     private final TextView work;
     private final TextView history;
@@ -121,9 +124,12 @@ public final class TelegramSurface extends FrameLayout {
     private final LinearLayout audioPanel;
     private final Button activityFilter;
     private final TimelineView list;
+    private final FrameLayout body;
     private final SurfaceAdapter adapter;
     private final TextView jump;
     private final LinearLayout compose;
+    private final LinearLayout editor;
+    private final TextView imeRecipient;
     private final ChatActivityEnterTopView replyTop;
     private final TextView reply;
     private final TextView pending;
@@ -144,6 +150,8 @@ public final class TelegramSurface extends FrameLayout {
     private String rowContext = "";
     private String chromeSignature = "";
     private boolean chat;
+    private boolean worldDock;
+    private boolean worldExpanded;
     private boolean settingDraft;
     private boolean visible;
     private boolean listAtEnd = true;
@@ -158,6 +166,9 @@ public final class TelegramSurface extends FrameLayout {
     private String lastFocusMessage = "";
     private boolean compactLayout;
     private boolean shortLayout;
+    private boolean constrainedIme;
+    private int panelLayoutWidth;
+    private int panelLayoutHeight;
     private final Set<String> seenTimelineKeys = new LinkedHashSet<>();
     private long timelineNewestTime;
     private int unreadTimeline;
@@ -174,6 +185,11 @@ public final class TelegramSurface extends FrameLayout {
         setVisibility(GONE);
 
         shell = vertical();
+        shell.setTag("telegram-conversation-panel");
+        // Consume blank space inside the panel, but leave the transparent outer
+        // FrameLayout non-clickable so the world outside it remains interactive.
+        shell.setClickable(true);
+        shell.setBackgroundColor(BACKGROUND);
         addView(shell, new FrameLayout.LayoutParams(-1, -1));
 
         header = vertical();
@@ -208,6 +224,18 @@ public final class TelegramSurface extends FrameLayout {
         headingText.addView(title);
         headingText.addView(subtitle);
         heading.addView(headingText, new LinearLayout.LayoutParams(0, -2, 1));
+
+        worldExpand = button("", "Expand conversation");
+        worldExpand.setTag("world-conversation-expand");
+        icon(worldExpand, "expand", SECONDARY);
+        worldExpand.setVisibility(GONE);
+        worldExpand.setOnClickListener(v -> {
+            if (!worldDock) return;
+            JSONObject value = new JSONObject();
+            try { value.put("expanded", !worldExpanded); } catch (JSONException ignored) { }
+            emit("worldExpand", value);
+        });
+        heading.addView(worldExpand, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
         runStop = button("Abort run", "Abort the exact observed run; automatic continuation may remain possible");
         runStop.setTag("telegram-stop-run");
@@ -266,7 +294,7 @@ public final class TelegramSurface extends FrameLayout {
         history.setOnClickListener(v -> showText("History coverage", history.getText().toString()));
         shell.addView(history, new LinearLayout.LayoutParams(-1, -2));
 
-        FrameLayout body = new FrameLayout(context);
+        body = new FrameLayout(context);
         shell.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
         list = new TimelineView(context);
         list.setTag("telegram-timeline");
@@ -399,8 +427,8 @@ public final class TelegramSurface extends FrameLayout {
         reply.setMaxLines(3);
         reply.setEllipsize(TextUtils.TruncateAt.END);
         replyTop.addReplyView(reply, new FrameLayout.LayoutParams(-1, -2));
-        replyTop.setContentDescription("Reply context. Tap to open the complete composer and manage the reply.");
-        replyTop.setOnClickListener(v -> emit("composer"));
+        replyTop.setContentDescription("Reply reference. Tap to review or clear the reply without leaving this conversation.");
+        replyTop.setOnClickListener(v -> showReplyReview());
         compose.addView(replyTop, new LinearLayout.LayoutParams(-1, -2));
 
         pending = text(12, SECONDARY, false);
@@ -408,12 +436,22 @@ public final class TelegramSurface extends FrameLayout {
         pending.setPadding(dp(12), dp(4), dp(12), dp(5));
         pending.setMaxLines(3);
         pending.setEllipsize(TextUtils.TruncateAt.END);
-        pending.setOnClickListener(v -> emit("composer"));
+        pending.setOnClickListener(v -> showComposerReview());
         compose.addView(pending, new LinearLayout.LayoutParams(-1, -2));
 
-        LinearLayout editor = horizontal();
+        editor = horizontal();
         editor.setPadding(dp(4), dp(4), dp(4), dp(4));
         compose.addView(editor, new LinearLayout.LayoutParams(-1, -2));
+        imeRecipient = text(19, TEXT, true);
+        imeRecipient.setTag("world-ime-recipient");
+        imeRecipient.setMaxLines(1);
+        imeRecipient.setEllipsize(TextUtils.TruncateAt.END);
+        imeRecipient.setGravity(Gravity.CENTER_VERTICAL);
+        imeRecipient.setMinHeight(dp(44));
+        imeRecipient.setPadding(dp(6), 0, dp(4), 0);
+        imeRecipient.setOnClickListener(v -> showOptions());
+        imeRecipient.setVisibility(GONE);
+        editor.addView(imeRecipient, new LinearLayout.LayoutParams(dp(100), -2));
         attach = button("＋", "Attach files");
         attach.setTag("telegram-attach");
         icon(attach, "attach", SECONDARY);
@@ -504,9 +542,17 @@ public final class TelegramSurface extends FrameLayout {
         if (value == null) return;
         payload = value;
         boolean nextVisible = value.optBoolean("visible", false);
+        boolean wasVisible = showing();
         visible = nextVisible;
         setVisibility(nextVisible ? VISIBLE : GONE);
-        if (!nextVisible) return;
+        if (!nextVisible) {
+            if (wasVisible) {
+                input.clearFocus();
+                InputMethodManager keyboard = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+                if (keyboard != null) keyboard.hideSoftInputFromWindow(getWindowToken(), 0);
+            }
+            return;
+        }
 
         float nextScale = (float) Math.max(1, Math.min(1.5, value.optDouble("appScale", 1)));
         float nextNativeFontScale = getResources().getConfiguration().fontScale;
@@ -546,6 +592,21 @@ public final class TelegramSurface extends FrameLayout {
         }
         chat = nextChat;
         viewName = nextView;
+        boolean nextWorldDock = nextChat && "environment".equals(nextView)
+            && Boolean.TRUE.equals(value.opt("worldDock"));
+        boolean nextWorldExpanded = nextWorldDock && Boolean.TRUE.equals(value.opt("worldExpanded"));
+        if (worldDock != nextWorldDock || worldExpanded != nextWorldExpanded) {
+            worldDock = nextWorldDock;
+            worldExpanded = nextWorldExpanded;
+            shell.setTag(worldDock ? "world-conversation-panel" : "telegram-conversation-panel");
+            setBackgroundColor(worldDock ? Color.TRANSPARENT : BACKGROUND);
+            shell.setBackground(worldDock ? outline(BACKGROUND, 20, PANEL_LIGHT) : null);
+            if (!worldDock) shell.setBackgroundColor(BACKGROUND);
+            shell.setElevation(worldDock ? dp(16) : 0);
+            shell.setClipToOutline(worldDock);
+            chromeSignature = "";
+            requestLayout();
+        }
         updateLayoutMode();
         updateChrome(changedConversation);
         updateRows(changedConversation);
@@ -568,16 +629,77 @@ public final class TelegramSurface extends FrameLayout {
     @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
         super.onSizeChanged(width, height, oldWidth, oldHeight);
         if (jump == null || !showing()) return;
-        updateLayoutMode();
-        chromeSignature = "";
-        updateChrome(false);
+        // Child bounds still describe the previous pass here. onMeasure owns
+        // the resolved panel geometry and will update its chrome atomically.
+        requestLayout();
+    }
+
+    @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        // A dock is the SAME conversation tree, not a second renderer. Resizing
+        // never changes identity, timeline rows, draft, reply, files or controls.
+        int width = MeasureSpec.getSize(widthMeasureSpec);
+        int height = MeasureSpec.getSize(heightMeasureSpec);
+        int panelWidth = -1, panelHeight = -1;
+        int gravity = Gravity.FILL;
+        // A real landscape IME can leave only ~96dp. In that physical space a
+        // two-row heading + editor cannot fit at the user's scaled text size.
+        // Use the full safe width for ONE exact-recipient composer row; retain
+        // the same hidden timeline/world instance and restore on IME dismissal.
+        boolean constrainedViewport = worldDock && height > 0 && height < dp(170);
+        if (worldDock && width > 0 && height > 0 && !worldExpanded && !constrainedViewport) {
+            boolean landscape = getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+            if (landscape && width >= dp(600)) {
+                panelWidth = Math.min(width - dp(200), Math.max(dp(340), Math.round(width * .56f)));
+                gravity = Gravity.END | Gravity.TOP;
+            } else {
+                // IME-resized short portrait windows need all their remaining
+                // height for messages + the real composer. Orientation comes
+                // from Configuration, not the keyboard-distorted aspect ratio.
+                boolean shortViewport = height < dp(480);
+                if (!shortViewport) {
+                    panelHeight = Math.round(height * .64f);
+                }
+                gravity = Gravity.BOTTOM | Gravity.START;
+            }
+        }
+        FrameLayout.LayoutParams params = (FrameLayout.LayoutParams) shell.getLayoutParams();
+        if (params.width != panelWidth || params.height != panelHeight || params.gravity != gravity) {
+            params.width = panelWidth;
+            params.height = panelHeight;
+            params.gravity = gravity;
+            shell.setLayoutParams(params);
+        }
+        panelLayoutWidth = panelWidth > 0 ? panelWidth : width;
+        panelLayoutHeight = panelHeight > 0 ? panelHeight : height;
+        updateLayoutMode(panelLayoutWidth, panelLayoutHeight);
+        if (jump != null && showing()) updateChrome(false);
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
+    /** Configuration changes preserve the same native widgets and custody. */
+    public void configurationChanged() {
+        float scale = getResources().getConfiguration().fontScale;
+        if (nativeFontScale != scale) {
+            nativeFontScale = scale;
+            applyScale(shell);
+            rowsSignature = "";
+            chromeSignature = "";
+            adapter.clearRowViews();
+            if (showing()) updateRows(false);
+        }
+        requestLayout();
     }
 
     private void updateLayoutMode() {
-        int height = getHeight() > 0 ? getHeight() : dp(getResources().getConfiguration().screenHeightDp);
-        int width = getWidth() > 0 ? getWidth() : dp(getResources().getConfiguration().screenWidthDp);
+        int height = panelLayoutHeight > 0 ? panelLayoutHeight : dp(getResources().getConfiguration().screenHeightDp);
+        int width = panelLayoutWidth > 0 ? panelLayoutWidth : dp(getResources().getConfiguration().screenWidthDp);
+        updateLayoutMode(width, height);
+    }
+
+    private void updateLayoutMode(int width, int height) {
         shortLayout = height > 0 && height < dp(520);
-        compactLayout = shortLayout || appScale * nativeFontScale >= 1.45f || width < dp(360);
+        constrainedIme = worldDock && height > 0 && height < dp(170);
+        compactLayout = shortLayout || appScale * nativeFontScale >= 1.45f || width < dp(worldDock ? 600 : 360);
     }
 
     private void updateChrome(boolean changedConversation) {
@@ -586,11 +708,26 @@ public final class TelegramSurface extends FrameLayout {
             + payload.optString("historyNote") + payload.optString("workSummary") + payload.optString("voiceStatus")
             + payload.optDouble("playbackRate", 1) + payload.optString("replyLabel") + payload.optString("color") + selectedSendMode
             + String.valueOf(can) + String.valueOf(payload.optJSONArray("pins")) + compactLayout + shortLayout + payload.optBoolean("recording")
-            + String.valueOf(payload.optJSONObject("audio")) + payload.optString("activityFilter") + payload.optString("activityMode");
+            + String.valueOf(payload.optJSONObject("audio")) + payload.optString("activityFilter") + payload.optString("activityMode")
+            + worldDock + worldExpanded + constrainedIme + ":" + panelLayoutWidth + ":" + panelLayoutHeight;
         if (!signature.equals(chromeSignature)) {
             chromeSignature = signature;
             placePinBanner();
             int color = chat ? agentColor(payload.optString("agent")) : ACCENT;
+            header.setVisibility(constrainedIme ? GONE : VISIBLE);
+            body.setVisibility(constrainedIme ? GONE : VISIBLE);
+            shell.setGravity(constrainedIme ? Gravity.CENTER_VERTICAL : Gravity.TOP);
+            imeRecipient.setVisibility(constrainedIme ? VISIBLE : GONE);
+            if (constrainedIme) {
+                String recipient = payload.optString("name", payload.optString("agent", "Agent"));
+                setText(imeRecipient, recipient);
+                imeRecipient.setTextColor(color);
+                imeRecipient.setContentDescription("Conversation recipient: " + recipient + ". Agent "
+                    + payload.optString("agent") + ". Tap for all conversation options, files, run controls and Close conversation.");
+                LinearLayout.LayoutParams recipientParams = (LinearLayout.LayoutParams) imeRecipient.getLayoutParams();
+                int recipientWidth = Math.min(dp(160), Math.max(dp(60), panelLayoutWidth - dp(300)));
+                if (recipientParams.width != recipientWidth) { recipientParams.width = recipientWidth; imeRecipient.setLayoutParams(recipientParams); }
+            }
             if (chat) {
                 setText(title, payload.optString("name", "Agent conversation"));
                 title.setTextColor(color);
@@ -609,10 +746,15 @@ public final class TelegramSurface extends FrameLayout {
             send.setBackground(round(color, 14));
             jump.setBackground(outline(PANEL_LIGHT, 24, chat ? color : SELECTED));
             backButton.setVisibility(chat || !"chats".equals(viewName) ? VISIBLE : GONE);
+            backButton.setContentDescription(worldDock ? "Close conversation" : "Back to agent conversations");
+            worldExpand.setVisibility(worldDock ? VISIBLE : GONE);
+            worldExpand.setContentDescription(worldExpanded ? "Collapse conversation to world panel" : "Expand conversation");
+            icon(worldExpand, worldExpanded ? "collapse" : "expand", SECONDARY);
+            footer.setVisibility(worldDock ? GONE : VISIBLE);
             runStop.setVisibility(chat ? VISIBLE : GONE);
             boolean durableStop = capability("durableStop");
-            setText(runStop, durableStop ? "Stop & hold" : "Abort run");
-            runStop.setContentDescription(durableStop ? "Stop the exact run and hold automatic continuation until explicit release" : "Abort the exact run; automatic continuation may remain possible");
+            setText(runStop, !capability("abort") ? "Stop unavailable" : durableStop ? "Stop & hold" : "Abort run");
+            runStop.setContentDescription(!capability("abort") ? "Stop unavailable. No supported exact run target. Tap for details." : durableStop ? "Stop the exact run and hold automatic continuation until explicit release" : "Abort the exact run; automatic continuation may remain possible");
             runStop.setAlpha(capability("abort") ? 1 : .55f);
             backDrawable.setRotation(0, false);
             String state = payload.optString("status", "Status unavailable");
@@ -633,12 +775,13 @@ public final class TelegramSurface extends FrameLayout {
             if (currentAudio() == null) setText(voice, fullVoiceState);
             setText(speed, rateLabel(payload.optDouble("playbackRate", 1)));
             setOptional(reply, payload.optString("replyLabel"));
-            replyTop.setVisibility(payload.optString("replyLabel").isEmpty() ? GONE : VISIBLE);
+            replyTop.setVisibility(constrainedIme || payload.optString("replyLabel").isEmpty() ? GONE : VISIBLE);
             reply.setMaxLines(compactLayout ? 1 : 3);
             pending.setMaxLines(compactLayout ? 1 : 3);
-            replyTop.setContentDescription(payload.optString("replyLabel") + ". Tap for the complete composer, including clear-reply controls.");
+            replyTop.setContentDescription(payload.optString("replyLabel") + ". Tap to review or clear this reply without leaving the conversation.");
             int editorLines = shortLayout ? 1 : compactLayout ? 2 : 4;
             int editorCap = dp(shortLayout ? 72 : compactLayout ? 96 : 112);
+            if (constrainedIme) editorCap = Math.max(dp(44), Math.min(editorCap, panelLayoutHeight - dp(8)));
             int editorPadding = input.getCompoundPaddingTop() + input.getCompoundPaddingBottom();
             int editorLineHeight = input.getLineHeight();
             while (editorLines > 1 && editorLineHeight * editorLines + editorPadding > editorCap) editorLines--;
@@ -649,8 +792,17 @@ public final class TelegramSurface extends FrameLayout {
             input.setMaxHeight(Math.max(dp(44), Math.min(editorCap, editorLineHeight * editorLines + editorPadding)));
             list.setPadding(dp(6), dp(8), dp(6), dp(shortLayout ? 8 : 12));
             compose.setVisibility(chat ? VISIBLE : GONE);
+            modeSelector.setVisibility(constrainedIme && panelLayoutWidth < dp(350) ? GONE : VISIBLE);
             String selectedModeLabel = "queue".equals(selectedSendMode) ? "Queue" : "steer".equals(selectedSendMode) ? "Steer" : compactLayout ? "Send" : "Follow-up";
-            setText(modeSelector, selectedModeLabel + " ▾");
+            if (worldDock && compactLayout) icon(modeSelector, "send-mode", color);
+            else {
+                modeSelector.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null);
+                modeSelector.setIncludeFontPadding(true);
+                modeSelector.setTextSize(13 * appScale);
+                baseTextSizes.put(modeSelector, 13f);
+                modeSelector.setPadding(dp(9), dp(5), dp(9), dp(5));
+                setText(modeSelector, selectedModeLabel + " ▾");
+            }
             modeSelector.setTextColor(color);
             modeSelector.setContentDescription("Send mode: " + ("send".equals(selectedSendMode) ? "Send / follow-up (default)" : selectedModeLabel)
                 + ". Tap to choose without submitting. Queue uses the same current follow-up policy; unsupported Steer dispatches nothing.");
@@ -694,6 +846,7 @@ public final class TelegramSurface extends FrameLayout {
             if (submittedCleared) submittedDraft = null;
         }
         updatePending();
+        pending.setVisibility(!constrainedIme && pending.length() > 0 ? VISIBLE : GONE);
     }
 
     private void updatePending() {
@@ -706,7 +859,7 @@ public final class TelegramSurface extends FrameLayout {
         if (attachments != null) for (int i = 0; i < attachments.length(); i++) {
             JSONObject item = attachments.optJSONObject(i);
             if (item == null) continue;
-            append(text, item.optString("name", "Attachment") + " · " + item.optString("state", "state unavailable"));
+            append(text, item.optString("name", "Attachment") + " · " + attachmentState(item));
         }
         if (outbox != null) for (int i = 0; i < outbox.length(); i++) {
             JSONObject item = outbox.optJSONObject(i);
@@ -716,7 +869,161 @@ public final class TelegramSurface extends FrameLayout {
         }
         setOptional(pending, text.toString());
         pending.setMaxLines(compactLayout ? 1 : 3);
-        pending.setContentDescription(text + ". Tap to open attachment and outbox controls.");
+        pending.setContentDescription(text + ". Tap to review attached files, their removal lock, and original outbox requests without leaving this conversation.");
+    }
+
+    /** Native draft/file custody review; opening it never changes renderers. */
+    private void showComposerReview() {
+        if (!chat || !showing()) return;
+        final JSONObject origin = scope();
+        ArrayList<String> labels = new ArrayList<>();
+        ArrayList<Runnable> commands = new ArrayList<>();
+        option(labels, commands, "Review unsent draft · " + input.length() + " characters",
+            () -> showText("Current unsent draft", input.length() == 0 ? "The text draft is empty. Attached files are listed separately." : input.getText().toString()));
+        if (!payload.optString("replyLabel").isEmpty()) option(labels, commands, "Review or clear reply reference", this::showReplyReview);
+        if (payload.optBoolean("recording")) option(labels, commands, "Finish current voice recording", () -> {
+            if (payload.optBoolean("recording")) emit("recordStop");
+            else toast("The recording has already finished. Any prepared file stays in this draft.");
+        });
+        JSONArray files = payload.optJSONArray("attachments");
+        int fileCount = 0;
+        if (files != null) for (int i = 0; i < files.length(); i++) {
+            JSONObject file = files.optJSONObject(i);
+            if (file == null || file.optString("id").isEmpty()) continue;
+            final String id = file.optString("id");
+            fileCount++;
+            option(labels, commands, "File · " + file.optString("name", "Attachment") + "\n" + attachmentState(file),
+                () -> showAttachmentReview(id));
+        }
+        if (fileCount == 0) option(labels, commands, "No files attached to this draft",
+            () -> showText("Draft attachments", "No files are currently staged for this agent. Use Attach files or the microphone in the conversation composer."));
+        JSONArray requests = payload.optJSONArray("outbox");
+        int requestCount = 0;
+        if (requests != null) for (int i = 0; i < requests.length(); i++) {
+            JSONObject request = requests.optJSONObject(i);
+            if (request == null || request.optString("id").isEmpty()) continue;
+            final String id = request.optString("id");
+            requestCount++;
+            option(labels, commands, "Outbox · " + request.optString("state", "unconfirmed") + "\nOriginal ID: " + id,
+                () -> showOutboxReview(id));
+        }
+        if (requestCount == 0) option(labels, commands, "No pending or unconfirmed requests",
+            () -> showText("Outbox", "No pending or unconfirmed requests are reported for this agent. This does not claim every earlier request was read or completed."));
+        // Explicit escape hatch only. Routine file/reply/outbox operations above
+        // stay in the real native conversation and retain the world behind it.
+        option(labels, commands, "Advanced full composer · legacy fallback", () -> emit("composer"));
+        new AlertDialog.Builder(getContext()).setTitle("Draft, files & outbox")
+            .setItems(labels.toArray(new String[0]), (dialog, which) -> {
+                if (reviewScope(origin)) commands.get(which).run();
+            }).setNegativeButton("Close", null).show();
+    }
+
+    private static String attachmentState(JSONObject file) {
+        String state = file.optString("state", "state unavailable");
+        return "ready".equals(state) ? "Ready to send with this draft" : state + " · not ready to send";
+    }
+
+    private boolean reviewScope(JSONObject origin) {
+        if (chat && showing() && sameScope(origin)) return true;
+        toast("The conversation changed. Reopen this review in its original agent session. Nothing was changed or dispatched.");
+        return false;
+    }
+
+    private JSONObject currentReviewItem(String array, String id) {
+        JSONArray items = payload.optJSONArray(array);
+        if (items != null) for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item != null && id.equals(item.optString("id"))) return item;
+        }
+        return null;
+    }
+
+    private boolean unresolvedFileOwner() {
+        JSONArray requests = payload.optJSONArray("outbox");
+        if (requests != null) for (int i = 0; i < requests.length(); i++) {
+            JSONObject request = requests.optJSONObject(i);
+            if (request == null) continue;
+            String state = request.optString("state");
+            if (("pending".equals(state) || "uncertain".equals(state))
+                && (request.optBoolean("localSubmission") || request.optString("path").isEmpty()
+                    || "/v1/message".equals(request.optString("path")))) return true;
+        }
+        return false;
+    }
+
+    private View reviewBody(String value) {
+        TextView content = text(15, TEXT, false);
+        content.setText(value);
+        content.setTextIsSelectable(true);
+        content.setPadding(dp(20), dp(12), dp(20), dp(12));
+        android.widget.ScrollView scroll = new android.widget.ScrollView(getContext());
+        scroll.addView(content);
+        return scroll;
+    }
+
+    private void showAttachmentReview(String id) {
+        final JSONObject origin = scope();
+        JSONObject file = currentReviewItem("attachments", id);
+        if (!reviewScope(origin)) return;
+        if (file == null) { toast("That file is no longer attached to this draft. Nothing was changed."); return; }
+        String detail = attachmentState(file) + "\n\nFile ID: " + id
+            + "\n\nNothing is sent by reviewing or previewing a file."
+            + (unresolvedFileOwner() ? "\n\nRemoval is locked while this agent has a pending or unconfirmed submission. Its original request and attached files are retained." : "\n\nRemove detaches only this staged file. The text draft is preserved.");
+        AlertDialog.Builder builder = new AlertDialog.Builder(getContext()).setTitle(file.optString("name", "Draft attachment"))
+            .setView(reviewBody(detail)).setNegativeButton("Close", null);
+        if ("ready".equals(file.optString("state"))) builder.setNeutralButton("Preview", (dialog, which) -> {
+            if (!reviewScope(origin)) return;
+            JSONObject current = currentReviewItem("attachments", id);
+            if (current == null || !"ready".equals(current.optString("state"))) { toast("The file is no longer ready in this draft. Nothing was played."); return; }
+            withScope(origin, () -> emit("attachmentPreview", data("id", id)));
+        });
+        if (!unresolvedFileOwner()) builder.setPositiveButton("Remove attachment", (dialog, which) -> {
+            if (!reviewScope(origin)) return;
+            if (currentReviewItem("attachments", id) == null) { toast("That file is no longer attached. Nothing was changed."); return; }
+            if (unresolvedFileOwner()) { toast("A pending or unconfirmed submission now owns the files. Nothing was removed."); return; }
+            withScope(origin, () -> emit("attachmentRemove", data("id", id)));
+        });
+        builder.show();
+    }
+
+    private void showOutboxReview(String id) {
+        final JSONObject origin = scope();
+        JSONObject request = currentReviewItem("outbox", id);
+        if (!reviewScope(origin)) return;
+        if (request == null) { toast("That original request is no longer in the pending outbox. No retry was dispatched."); return; }
+        String detail = "Original ID: " + id + "\n\nStatus: " + request.optString("state", "unconfirmed")
+            + "\n" + request.optString("note", "Acceptance does not prove reading or completion.")
+            + "\n\nOriginal session: " + request.optString("sessionId", "not supplied")
+            + "\nOperation: " + request.optString("path", "not supplied")
+            + (request.optBoolean("priorSession") ? "\nEarlier-session request. Its original identity is preserved." : "")
+            + "\n\nA check uses this original request ID only. A new submission is not created; exact-run steering is never replayed here.";
+        AlertDialog.Builder builder = new AlertDialog.Builder(getContext()).setTitle("Original outbox request")
+            .setView(reviewBody(detail)).setNegativeButton("Close", null);
+        if (request.optBoolean("retry") && "uncertain".equals(request.optString("state"))) builder.setPositiveButton("Check original ID", (dialog, which) -> {
+            if (!reviewScope(origin)) return;
+            JSONObject current = currentReviewItem("outbox", id);
+            if (current == null || !current.optBoolean("retry") || !"uncertain".equals(current.optString("state"))) {
+                toast("That request is no longer eligible for an original-ID check. Nothing was dispatched.");
+                return;
+            }
+            withScope(origin, () -> emit("retry", data("id", id)));
+        });
+        builder.show();
+    }
+
+    private void showReplyReview() {
+        final JSONObject origin = scope();
+        final String reference = payload.optString("replyLabel");
+        final String replyId = payload.optString("replyId");
+        if (!reviewScope(origin)) return;
+        if (reference.isEmpty()) { toast("There is no reply reference in this draft."); return; }
+        new AlertDialog.Builder(getContext()).setTitle("Reply reference")
+            .setView(reviewBody(reference + "\n\nThis reference belongs to the current agent session. Clearing it preserves the draft text and staged files."))
+            .setNegativeButton("Keep reply", null).setPositiveButton("Clear reply", (dialog, which) -> {
+                if (!reviewScope(origin)) return;
+                if (replyId.isEmpty() || !replyId.equals(payload.optString("replyId")) || !reference.equals(payload.optString("replyLabel"))) { toast("The reply reference changed. Reopen it before clearing. Nothing was changed."); return; }
+                withScope(origin, () -> emit("replyClear", data("id", replyId)));
+            }).show();
     }
 
     private void updateRows(boolean changedConversation) {
@@ -837,7 +1144,7 @@ public final class TelegramSurface extends FrameLayout {
     private void renderPin() {
         JSONArray pins = payload.optJSONArray("pins");
         int count = pins == null ? 0 : pins.length();
-        pinBar.setVisibility(chat && count > 0 ? VISIBLE : GONE);
+        pinBar.setVisibility(chat && !constrainedIme && count > 0 ? VISIBLE : GONE);
         if (count == 0) return;
         pinPosition = Math.max(0, Math.min(pinPosition, count - 1));
         JSONObject pin = pins.optJSONObject(pinPosition);
@@ -856,7 +1163,7 @@ public final class TelegramSurface extends FrameLayout {
     }
 
     private void placePinBanner() {
-        int width = getWidth() > 0 ? getWidth() : dp(getResources().getConfiguration().screenWidthDp);
+        int width = panelLayoutWidth > 0 ? panelLayoutWidth : dp(getResources().getConfiguration().screenWidthDp);
         boolean inline = shortLayout && width >= dp(600);
         ViewGroup target = inline ? heading : shell;
         ViewGroup current = (ViewGroup) pinBar.getParent();
@@ -950,10 +1257,11 @@ public final class TelegramSurface extends FrameLayout {
         ArrayList<Runnable> commands = new ArrayList<>();
         option(labels, commands, "Search this history", this::showSearch);
         if (chat) {
+            if (constrainedIme) option(labels, commands, "Close conversation", () -> back());
             option(labels, commands, "Pinned messages", this::showPinOptions);
             option(labels, commands, "Pinned message history", this::showPinHistory);
             option(labels, commands, "Send / Queue / Steer / Stop", this::showSendOptions);
-            option(labels, commands, "Files, drafts and outbox", () -> emit("composer"));
+            option(labels, commands, "Files, drafts and outbox", this::showComposerReview);
             option(labels, commands, "Advanced conversation controls", () -> emit("tools"));
             option(labels, commands, "Commands", () -> emit("commands"));
             option(labels, commands, "Older messages", () -> emit("older"));
@@ -979,7 +1287,7 @@ public final class TelegramSurface extends FrameLayout {
     private void updateAudio() {
         JSONObject audio = currentAudio();
         String state = audio == null ? "idle" : audio.optString("state", "idle");
-        boolean present = chat && audio != null && !state.isEmpty() && !"idle".equals(state)
+        boolean present = chat && !constrainedIme && audio != null && !state.isEmpty() && !"idle".equals(state)
             && !"stopped".equals(state) && !"ended".equals(state);
         audioPanel.setVisibility(present ? VISIBLE : GONE);
         if (!present) return;
@@ -1041,7 +1349,7 @@ public final class TelegramSurface extends FrameLayout {
         new AlertDialog.Builder(getContext()).setTitle("Run controls")
             .setItems(new String[]{"Send / follow-up · default", "Queue · same current follow-up policy", steerLabel,
                 capability("abort") ? "Stop the observed run" : "Stop unavailable for the observed run",
-                "Files, outbox and advanced tools", "Commands"}, (dialog, which) -> withScope(origin, () -> {
+                "Files, draft and outbox", "Commands"}, (dialog, which) -> withScope(origin, () -> {
                 if (!sameScope(origin) || which <= 3 && !origin.optString("runId").equals(payload.optString("controlRunId"))) {
                     toast("The conversation or observed run changed. Reopen its controls. Nothing was dispatched.");
                     return;
@@ -1050,7 +1358,7 @@ public final class TelegramSurface extends FrameLayout {
                 else if (which == 1) selectSendMode("queue");
                 else if (which == 2) selectSendMode("steer");
                 else if (which == 3) available("abort", "stop", "No supported Stop target is currently observed. Nothing was dispatched.");
-                else if (which == 4) emit("composer");
+                else if (which == 4) showComposerReview();
                 else emit("commands");
             })).show();
     }
@@ -1796,6 +2104,23 @@ public final class TelegramSurface extends FrameLayout {
                 path.moveTo(3, 3); path.lineTo(22, 12); path.lineTo(3, 21);
                 path.lineTo(6, 13); path.lineTo(16, 12); path.lineTo(6, 11); path.close();
                 canvas.drawPath(path, paint);
+            } else if ("send-mode".equals(kind)) {
+                canvas.drawLine(4, 6, 20, 6, paint);
+                canvas.drawLine(4, 12, 20, 12, paint);
+                canvas.drawLine(4, 18, 20, 18, paint);
+                paint.setStyle(Paint.Style.FILL);
+                canvas.drawCircle(9, 6, 2.5f, paint);
+                canvas.drawCircle(16, 12, 2.5f, paint);
+                canvas.drawCircle(7, 18, 2.5f, paint);
+            } else if ("expand".equals(kind) || "collapse".equals(kind)) {
+                boolean expand = "expand".equals(kind);
+                float a = expand ? 4 : 9, b = expand ? 9 : 4;
+                canvas.drawLine(a, b, a, a, paint);
+                canvas.drawLine(a, a, b, a, paint);
+                canvas.drawLine(24 - a, 24 - b, 24 - a, 24 - a, paint);
+                canvas.drawLine(24 - a, 24 - a, 24 - b, 24 - a, paint);
+                canvas.drawLine(expand ? 10 : 3, expand ? 10 : 3, expand ? 4 : 9, expand ? 4 : 9, paint);
+                canvas.drawLine(expand ? 14 : 21, expand ? 14 : 21, expand ? 20 : 15, expand ? 20 : 15, paint);
             } else if ("chats".equals(kind)) {
                 canvas.drawRoundRect(new RectF(3, 3, 21, 18), 3, 3, paint);
                 Path path = new Path(); path.moveTo(7, 18); path.lineTo(5, 22); path.lineTo(13, 18);
