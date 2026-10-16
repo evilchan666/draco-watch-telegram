@@ -5,15 +5,15 @@
   "versionCode": 26,
   "integration": "First-person operating Environment and native Telegram-derived full-feature conversation over existing Watch transport",
   "loginMigration": false,
-  "updaterPublished": false,
+  "updaterPublished": true,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
-    "version": "0.4.0",
-    "versionCode": 24,
-    "sha256": "90fb945b36d14e3f8d6da1375a3a3fbf62833174bfc2507edd162e00eccea234"
+    "version": "0.4.1",
+    "versionCode": 25,
+    "sha256": "e1561b3fa29fdaf95083777526356e7a1a06260058fcda82031bdb032835d4f3"
   },
-  "releaseState": "0.4.1/code25 authenticated updater and complete pinned download verified; physical handset appearance and smoothness unverified",
-  "apkSha256": "e1561b3fa29fdaf95083777526356e7a1a06260058fcda82031bdb032835d4f3",
-  "apkBytes": 1515398,
-  "packagedForkSource": "42e5ddd01e8133da35d4deaf6a6b8838e9444156"
+  "releaseState": "0.5.0/code26 authenticated private updater and full pinned download verified; physical phone connection/appearance/smoothness unverified",
+  "apkSha256": "dce39fc5f2a621eec7460c9a3da1d5c4469d7471b44bbfda7d7c1ad708fb8534",
+  "apkBytes": 1523590,
+  "packagedForkSource": "edaec9e912a4bb90f84a213bf6797a69562177d4"
 }
