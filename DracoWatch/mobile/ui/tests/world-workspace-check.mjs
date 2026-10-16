@@ -76,7 +76,7 @@ try{
   await call('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5});
   await call('Page.addScriptToEvaluateOnNewDocument',{source:`
     Object.defineProperty(window,'DracoEnvironment',{configurable:true,set(api){Object.defineProperty(window,'DracoEnvironment',{value:{...api,Environment:class extends api.Environment{constructor(...args){super(...args);if(args[0]?.id==='environment-canvas')window.__environment=this;}}},writable:true,configurable:true});}});
-    window.__ids=['main','forge','atlas','aera-new','vvv','daedalus'];window.__requests=[];window.__calls=[];window.__renders=[];
+    window.__ids=['main','forge','atlas','aera-new','vvv','daedalus'];window.__requests=[];window.__acknowledged=[];window.__calls=[];window.__renders=[];
     window.__sessions=Object.fromEntries(__ids.map(id=>[id,'workspace:'+id]));window.__runs=Object.fromEntries(__ids.map(id=>[id,'run:'+id]));
     window.__caps={send:true,queue:true,strictSteer:false,steer:false,abort:true,attachments:true,voice:true,reply:true,speech:true,commands:true};
     window.__messages=agent=>Array.from({length:9},(_,i)=>({id:'report:'+agent+':'+i,agent,sessionId:__sessions[agent],role:i===1?'user':'assistant',text:'SYNTHETIC '+agent+' report '+i+'. '+('Readable retained workspace detail. '.repeat(7)),kind:'Public report',timestamp:Date.now()-30000+i*1000,publicAttested:true,source:'authenticated-native-history',replyAvailable:true,media:[]}));
@@ -93,7 +93,7 @@ try{
       request(id,method,route,json){const body=json?JSON.parse(json):null;__requests.push({id,method,route,body});const agent=body?.agent||new URL(route,'http://fixture.invalid').searchParams.get('agent')||'atlas';let data;
         if(method==='GET')data=route.startsWith('/v1/capabilities')?{...__caps,agent,sessionId:__sessions[agent]}:{agent,sessionId:__sessions[agent],messages:__messages(agent),hasMore:false,total:9,historyState:{status:'complete'}};
         else data={status:'accepted',dispatched:true};
-        setTimeout(()=>onDracoResponse({id,ok:true,status:200,data}),2);
+        setTimeout(()=>{onDracoResponse({id,ok:true,status:200,data});__acknowledged.push(id)},2);
       },
       chooseAttachment(agent){__calls.push({method:'chooseAttachment',agent})},startRecording(agent){__calls.push({method:'startRecording',agent})},stopRecording(){__calls.push({method:'stopRecording'})},
       stopMedia(){},hideKeyboard(){},cancelAttachment(id){__calls.push({method:'cancelAttachment',id})},releaseAttachment(id){__calls.push({method:'releaseAttachment',id})},
@@ -164,9 +164,9 @@ try{
   await evaluate("__action('reply',{id:'report:atlas:0'});__action('draft',{text:'Explicit isolated ATLAS submission'});__action('send',{text:'Explicit isolated ATLAS submission',mode:'send'})");
   await wait("__requests.some(request=>request.route==='/v1/message'&&request.body.text==='Explicit isolated ATLAS submission')");
   await check("(()=>{const request=__requests.filter(request=>request.route==='/v1/message').at(-1);return request.body.agent==='atlas'&&request.body.sessionId==='workspace:atlas'&&request.body.mode==='send'&&request.body.replyToId==='report:atlas:0'&&request.body.attachmentIds.includes('isolated-file-atlas')&&request.body.attachmentIds.includes('isolated-voice-atlas')&&request.body.echoToTelegram===false;})()",'Explicit Send preserves exact text, selected session, captured files, voice and reply through original outbox');
-  await wait('__lastRender.outbox.length===0');
+  await wait("__acknowledged.includes(__requests.find(r=>r.body?.text==='Explicit isolated ATLAS submission')?.id)&&__lastRender.outbox.length===0");
   await evaluate("__action('reply',{id:'report:atlas:0'});__action('draft',{text:'First awaiting acknowledgement'});__action('send',{text:'First awaiting acknowledgement',mode:'send'});__action('reply',{id:'report:atlas:1'});__action('draft',{text:'Next unsent draft'})");
-  await wait('__lastRender.outbox.length===0');
+  await wait("__acknowledged.includes(__requests.find(r=>r.body?.text==='First awaiting acknowledgement')?.id)&&__lastRender.draft==='Next unsent draft'&&__lastRender.outbox.length===0");
   await check("__lastRender.replyId==='report:atlas:1'&&__lastRender.draft==='Next unsent draft'",'Late acceptance preserves subsequently chosen reply and unsent draft');
   await evaluate("__action('replyClear',{id:'report:atlas:1'})");
   await select('forge');await nativeReady('forge');

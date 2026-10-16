@@ -1,5 +1,5 @@
 {
-  "watchSource": "6034b0aa8ac4f6d5cc99f0ade8c247b2ffc5c593",
+  "watchSource": "99e3dfd762b2cff156ddddd2ab5c6b10413403a8",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "versionName": "0.7.0",
   "versionCode": 28,
@@ -12,5 +12,5 @@
     "versionCode": 27,
     "sha256": "7651deaff1129ed59669d603a242ca418e72b20f495fa0504b5a0217a40cfbe7"
   },
-  "releaseState": "Verified interaction candidate; final notice-only correction awaiting final package check"
+  "releaseState": "Source frozen; Android interaction 714 and browser workflow 60 passed; final private package checks pending"
 }
