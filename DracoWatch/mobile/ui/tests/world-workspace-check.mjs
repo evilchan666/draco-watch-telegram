@@ -197,6 +197,9 @@ try{
   await evaluate("document.getElementById('world-workspace-talk').click()");await nativeReady('daedalus');
   await check("__environment.reading===true&&__lastRender.worldDock&&__lastRender.world",'Explicit Talk returns movement to guarded conversation mode');
 
+  await evaluate("window.__nativeNotices=[];DracoNative.notifyTelegram=text=>__nativeNotices.push(text);__action('stop',{runId:'stale-notice-run'})");
+  await check("__nativeNotices.length===1&&document.getElementById('toast').hidden===true",'Native conversation notice is delivered once without a second oversized web overlay');
+
   // Browser fallback exercises the real complete composer/list rather than a
   // fixture-painted chat. Both high-text-scale orientations must expose world
   // pixels and readable conversation at the same time.
