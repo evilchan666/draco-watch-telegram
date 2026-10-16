@@ -803,3 +803,14 @@ body[data-world-handedness=left] .world-interact { right: auto; left: max(16px,v
  .world-operation-agents { display: flex; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
  .world-operation-agents .world-operation-agent { flex: 1 0 auto; white-space: nowrap; padding-inline: 8px; }
 }
+/* A short landscape needs a reading column, not fixed rows consuming it. */
+@media (max-height:420px) and (min-width:650px) {
+ .world-operations { width: calc(100vw - max(16px,var(--world-safe-left,0px)) - max(16px,var(--world-safe-right,0px))); }
+ .world-operations[open] { display: grid; grid-template-columns: minmax(120px,28%) minmax(0,1fr); grid-template-rows: auto minmax(44px,1fr) auto auto; grid-template-areas: "head head" "agents reading" "state reading" "actions actions"; }
+ .world-operations-head { grid-area: head; }
+ .world-operation-agents { grid-area: agents; min-height: 0; display: flex; flex-direction: column; overflow: auto; padding: 0 8px 6px; }
+ .world-operation-agents .world-operation-agent { flex: 0 0 auto; white-space: normal; }
+ .world-operation-state { grid-area: state; font-size: .5rem; }
+ .world-operation-body { grid-area: reading; border-left: 1px solid #819aac29; }
+ .world-operation-actions { grid-area: actions; }
+}

@@ -124,6 +124,11 @@ public final class WorldChecks extends Instrumentation {
         tap(".world-menu-button");tap(".world-agent[data-agent='atlas']");waitImmersive(true);tap("#world-operations-open");waitImmersive(false);
         scriptCheck("document.getElementById('world-operations').open&&document.getElementById('world-operations-title').textContent==='ATLAS'&&document.querySelector('.world-operation-body').textContent.includes('WORLD PUBLIC FLEET REPORT atlas')",label+" Operations shows exact captured public session report");
         scriptCheck("document.querySelector('.world-operation-state').textContent.includes('Waiting for tool')&&worldChecks.renderer.diagnostics().active===false",label+" exact-run fresh tool-wait is distinct from a paused local world");
+        scriptCheck("document.querySelector('.world-operation-body').clientHeight>=100",label+" actual inset Android landscape retains at least 100 CSS pixels for reading instead of only a heading");
+        waitForIdleSync();SystemClock.sleep(250);
+        Bitmap operationShot=getUiAutomation().takeScreenshot();
+        if(operationShot==null)throw new AssertionError("Operations screenshot unavailable");
+        try(FileOutputStream out=new FileOutputStream(artifact(label+"-operations.png"))){operationShot.compress(Bitmap.CompressFormat.PNG,100,out);}finally{operationShot.recycle();}
         tap(".world-operation-agent[data-agent='forge']");SystemClock.sleep(300);
         scriptCheck("document.getElementById('world-operations').open&&document.getElementById('world-operations-title').textContent==='FORGE'&&!document.querySelector('.world-operation-talk').disabled&&document.querySelector('.world-operation-body').textContent.includes('WORLD PUBLIC FLEET REPORT forge')",label+" switching Operations agent survives asynchronous close event with exact usable owner");
         JSONObject before=pose();tap(".world-operation-talk");waitSurface(true);waitJs("worldChecks.last.agent==='forge'&&worldChecks.last.sessionId==='world-session-forge'");
