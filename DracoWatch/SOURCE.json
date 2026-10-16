@@ -5,11 +5,15 @@
   "versionCode": 24,
   "integration": "Retained WebGL perspective Environment; actual RecyclerView timeline and Telegram SmoothScroller, existing Watch-native message/composer adapters",
   "loginMigration": false,
-  "updaterPublished": false,
+  "updaterPublished": true,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
     "version": "0.3.4",
     "versionCode": 23,
     "sha256": "00ca402487641b5b4186e1fc0f7c451bd6a461e32cad5b452dba890f4aecfdc0"
-  }
+  },
+  "releaseState": "0.4.0/code24 private updater and pinned download verified; physical installation/usability unverified",
+  "apkSha256": "90fb945b36d14e3f8d6da1375a3a3fbf62833174bfc2507edd162e00eccea234",
+  "apkBytes": 1511302,
+  "packagedForkSource": "0f006c8d529a202e7ee5e9fbf2981a6938d0bbf8"
 }
