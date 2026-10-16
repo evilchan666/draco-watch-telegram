@@ -123,3 +123,19 @@ merely to make the compiler pass.
 The root app integrates this subset with Watch-native message, composer, pin,
 activity and bridge adapters. Retaining the unchanged legacy WebView features is
 separate from claiming every surface now uses Telegram native components.
+
+## 0.4.0 timeline migration
+
+The real AndroidX RecyclerView 1.3.2 now owns layout, recycling, fling, touch
+arbitration and row-level DiffUtil updates. Telegram's actual SmoothScroller
+from the pinned fork supplies its interpolation, target alignment, offsets and
+duration calculation. Its package is relocated; AndroidUtilities' UI delay is
+replaced by the main Handler, and the private standard LinearSmoothScroller
+constants are declared locally. Exact upstream source/hash is retained above.
+Watch's message views and composer remain Watch adapters, not full ChatActivity
+or ChatMessageCell. This is not full Telegram client parity.
+
+Dependencies are pinned by byte hash in dependencies/manifest.json, extracted
+offline, and compiled into the app. AndroidX is Apache-2.0; Kotlin stdlib is
+Apache-2.0. Their licenses and artifact/source coordinates are retained under
+dependencies. No Telegram network or account service is introduced.

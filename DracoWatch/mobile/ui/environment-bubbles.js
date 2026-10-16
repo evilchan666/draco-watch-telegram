@@ -149,76 +149,43 @@
     });
   }
 
+  // A retained inspection dock, never six screen-space cards. Camera and actor
+  // movement cannot move/reparent report text or interrupt a reading selection.
   class Bubbles {
-    constructor({stage,renderer,specs=window.DracoChamber?.SPECS||[],select}={}) {
-      this.stage=stage;this.renderer=renderer;this.specs=specs;this.select=select;this.active=false;this.live=false;this.motion=false;this.destroyed=false;this.limited=false;this.lastLayout=0;this.fontScale=1;this.nativeFontScale=1;this.appFontScale=1;this.placements=[];this.geometry='';this.cards=new Map();
-      let storage;try{storage=window.localStorage;}catch{}this.expiry=new IdleExpiry({storage});this.reports=[];this.selected=null;
-      this.layer=document.createElement('div');this.layer.className='environment-bubbles';this.layer.hidden=true;this.layer.setAttribute('aria-label','Public agent speech previews');
-      this.lines=document.createElementNS('http://www.w3.org/2000/svg','svg');this.lines.setAttribute('class','environment-bubble-lines');this.lines.setAttribute('aria-hidden','true');this.layer.append(this.lines);
-      for(const spec of specs){
-        const button=document.createElement('button');button.type='button';button.className='environment-bubble';button.dataset.agent=spec.id;button.style.setProperty('--agent',spec.color);button.addEventListener('click',()=>this.select?.(spec.id));
-        const name=document.createElement('span'),label=document.createElement('span'),text=document.createElement('span');name.className='environment-bubble-name';label.className='environment-bubble-label';text.className='environment-bubble-preview';name.textContent=spec.name;button.append(name,label,text);
-        const line=document.createElementNS('http://www.w3.org/2000/svg','line');line.setAttribute('stroke',spec.color);line.setAttribute('stroke-width','1.5');line.setAttribute('vector-effect','non-scaling-stroke');this.lines.append(line);this.layer.append(button);this.cards.set(spec.id,{button,label,text,line});
-      }
-      stage.append(this.layer);
-      this.notice=document.createElement('p');this.notice.className='environment-bubble-notice quiet-note';this.notice.setAttribute('role','status');this.notice.textContent='Public report previews are below the camera controls. This keeps enlarged text readable and agents unobstructed.';this.notice.hidden=true;stage.after(this.notice);
-      this.observer=new ResizeObserver(()=>this.layout(true));this.observer.observe(stage);
-      this.onVisibility=()=>{this.layer.hidden=!this.active||document.hidden;this.notice.hidden=!this.active||document.hidden||!this.limited;if(!document.hidden){this.renderReports();this.layout(true);}};document.addEventListener('visibilitychange',this.onVisibility);
+    constructor({stage,renderer,specs=window.DracoChamber?.SPECS||[],select,work}={}) {
+      Object.assign(this,{stage,renderer,specs,select,work,active:false,selected:'atlas',reports:[],packingChanges:0});
+      let storage;try{storage=window.localStorage;}catch{}this.expiry=new IdleExpiry({storage});
+      this.layer=document.createElement('section');this.layer.className='spatial-inspector';this.layer.dataset.packing='dock';this.layer.hidden=true;this.layer.setAttribute('aria-label','Selected agent inspection');
+      this.heading=document.createElement('h3');this.status=document.createElement('p');this.status.className='spatial-inspector-state';
+      this.label=document.createElement('small');this.text=document.createElement('p');this.text.className='spatial-report';
+      this.pin=document.createElement('p');this.pin.className='spatial-pin';this.operation=document.createElement('p');this.operation.className='spatial-operation';
+      this.details=document.createElement('div');this.details.className='spatial-report-detail';this.details.append(this.label,this.text);
+      const actions=document.createElement('div');actions.className='spatial-actions';
+      const button=(label,callback)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',callback);actions.append(b);return b;};
+      button('Conversation & pins',()=>this.select?.(this.selected));button('Work details',()=>this.work?.(this.selected));
+      const head=document.createElement('div');head.className='spatial-inspector-head';head.append(this.heading,this.status);
+      this.layer.append(head,this.operation,this.details,this.pin,actions);stage.after(this.layer);
     }
-    update(activity,agents,{live=false,selected,motion=false,nativeFontScale=1,appFontScale=1,now=Date.now()}={}) {
-      if(this.destroyed)return;this.live=live===true;this.motion=motion===true;this.nativeFontScale=clamp(Number(nativeFontScale)||1,.85,1.8);this.appFontScale=clamp(Number(appFontScale)||1,.75,2);
-      this.reports=selectReports(activity,agents,{live:this.live,now,specs:this.specs});this.selected=selected;this.renderReports(now);this.layout(true);
+    update(activity,agents,{live=false,selected,now=Date.now(),observation=null,pins=[]}={}) {
+      this.selected=selected||this.selected;this.live=live===true;this.agents=agents;
+      this.reports=this.expiry.apply(selectReports(activity,agents,{live:this.live,now,specs:this.specs}),{now});
+      const report=this.reports.find(r=>r.id===this.selected),spec=this.specs.find(s=>s.id===this.selected);if(!spec)return;
+      const set=(el,text)=>{if(el.textContent!==text)el.textContent=text;};
+      this.layer.style.setProperty('--agent',spec.color);set(this.heading,spec.name);
+      set(this.status,observation?.execution||stateLabel(this.live?agents.get(this.selected)?.status:'unknown'));
+      const age=observation?.ageMs;set(this.operation,(observation?.summary||'Select Work details for recorded operations. Run occupancy is not proof of execution.')+(Number.isFinite(age)?' · observed '+Math.floor(age/1000)+'s ago':''));
+      // Offline keeps no live speech claim. Idle expiry removes only the preview,
+      // never the selected identity, chat, pins, or recorded work access.
+      const hidden=!report||report.hidden||!this.live;
+      set(this.label,hidden?this.live?'Public preview expired · conversation retained':'Observation unavailable · conversation retained':report.label);
+      set(this.text,hidden?'Open the conversation for retained reports.':report.preview);
+      this.layer.dataset.messageId=hidden?'':report.sourceId||'';
+      const pin=pins.at(-1);set(this.pin,pin?'Pinned · '+preview(pin.text||pin.title||'Saved item'):'');this.pin.hidden=!pin;
     }
-    renderReports(now=Date.now()) {
-      for(const report of this.expiry.apply(this.reports,{now})){
-        const card=this.cards.get(report.id);card.button.dataset.kind=report.kind;card.button.dataset.status=report.status;card.button.dataset.messageId=report.sourceId||'';card.button.dataset.historical=String(report.historical);card.button.title=report.name+' · '+report.label;
-        card.hidden=report.hidden===true;card.button.hidden=card.hidden;if(card.hidden)card.line.setAttribute('visibility','hidden');
-        card.button.classList.toggle('selected',report.id===this.selected);card.button.setAttribute('aria-pressed',String(report.id===this.selected));
-        card.button.setAttribute('aria-label',report.name+'. '+report.label+'. '+report.preview+'. Open conversation for the full public report.');
-        if(card.label.textContent!==report.label)card.label.textContent=report.label;if(card.text.textContent!==report.preview)card.text.textContent=report.preview;
-      }
-    }
-    show(active){if(this.destroyed)return;this.active=active===true;this.layer.hidden=!this.active||document.hidden;this.notice.hidden=!this.active||document.hidden||!this.limited;if(this.active){this.renderReports();this.layout(true);}}
-    // Hook to the renderer's existing frame; no second RAF, timer, network read,
-    // or layout measurement is introduced. Camera changes call layout(true).
-    layout(force=false) {
-      if(this.destroyed||!this.active||document.hidden)return;
-      const now=typeof performance!=='undefined'?performance.now():Date.now();if(!force&&this.live&&this.motion&&now-this.lastLayout<1000/30)return;this.lastLayout=now;
-      const width=this.renderer.width,height=this.renderer.height;if(!width||!height)return;
-      const bodyPoints=projectActors(this.renderer,this.specs),points=bodyPoints.filter(point=>!this.cards.get(point.id)?.hidden);
-      if(!points.length){this.layer.hidden=true;this.notice.hidden=true;this.placements=[];this.limited=false;return;}
-      if(force){
-        const sample=this.cards.values().next().value,computed=typeof window.getComputedStyle==='function'?parseFloat(window.getComputedStyle(sample.text).fontSize):12;
-        this.fontScale=resolveFontScale(computed,this.nativeFontScale,this.appFontScale);
-      }
-      const viewBox=`0 0 ${width} ${height}`;if(this.lines.getAttribute('viewBox')!==viewBox)this.lines.setAttribute('viewBox',viewBox);
-      const geometry=[width,height,this.renderer.zoom,this.renderer.pan?.x,this.renderer.pan?.y,this.fontScale,points.map(point=>point.id).join(',')].join(':');
-      // A snapshot/visibility callback must not turn a settled report list back
-      // into floating cards just because a creature walked to a different spot.
-      // Retry fitting only on a real camera/size/type/visible-report-set change.
-      if(this.limited&&geometry===this.geometry)return;
-      if(geometry!==this.geometry){this.placements=[];this.geometry=geometry;}
-      const boxes=layoutBubbles(points,{width,height,bodyPoints,preferredWidth:Math.min(180,140+24*(this.fontScale-1)),preferredHeight:84+50*(this.fontScale-1),compactHeight:60+45*(this.fontScale-1),previous:this.placements});this.placements=boxes;
-      // A 44px hit target is not proof that its report is readable. Never reduce
-      // six reports to the single truncated word/chips shown on the S25 Ultra.
-      const overhead=boxes.density==='compact'?14+12.5*this.fontScale:22+26*this.fontScale;
-      this.limited=!boxes.packed||boxes.density==='chip'||boxes.some(box=>box.height<=58||box.height-overhead<30*this.fontScale);
-      const packing=this.limited?'list':'clear';if(this.layer.dataset.packing!==packing){this.packingChanges=(this.packingChanges||0)+1;this.layer.dataset.packing=packing;}this.layer.classList.toggle('environment-bubbles-list',this.limited);this.layer.hidden=false;this.notice.hidden=!this.limited;
-      if(this.limited){
-        this.placements=[];
-        if(this.layer.parentElement===this.stage){if(this.stage.parentElement?.append)this.stage.parentElement.append(this.notice,this.layer);else this.stage.after(this.notice,this.layer);}
-        for(const {button} of this.cards.values()){button.dataset.density='regular';button.style.setProperty('--bubble-lines','3');}
-        return;
-      }
-      if(this.layer.parentElement!==this.stage)this.stage.append(this.layer);
-      for(const box of boxes){
-        const card=this.cards.get(box.id);card.button.style.transform=`translate(${box.x.toFixed(1)}px, ${box.y.toFixed(1)}px)`;card.button.style.width=box.width.toFixed(1)+'px';card.button.style.height=box.height.toFixed(1)+'px';
-        card.button.dataset.density=boxes.density;card.button.style.setProperty('--bubble-lines','2');
-        if(box.connector){card.line.setAttribute('visibility','visible');card.line.setAttribute('x1',box.connector.start.x.toFixed(1));card.line.setAttribute('y1',box.connector.start.y.toFixed(1));card.line.setAttribute('x2',box.connector.end.x.toFixed(1));card.line.setAttribute('y2',box.connector.end.y.toFixed(1));}
-        else card.line.setAttribute('visibility','hidden');
-      }
-    }
-    destroy(){if(this.destroyed)return;this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);this.layer.remove();this.notice.remove();this.cards.clear();}
+    show(active){this.active=active===true;this.layer.hidden=!this.active;}
+    // Kept as a no-op compatibility hook: no RAF layout/packing measurements.
+    layout(){}
+    destroy(){this.layer.remove();}
   }
   window.DracoEnvironmentBubbles={Bubbles,IdleExpiry,IDLE_EXPIRY_MS,selectReports,layoutBubbles,projectActors,resolveFontScale,previewText};
 })();

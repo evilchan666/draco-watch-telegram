@@ -4,7 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
-import android.database.DataSetObserver;
+import android.view.MotionEvent;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
@@ -19,9 +19,9 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.EditText;
-import android.widget.BaseAdapter;
+
 import android.widget.ImageView;
-import android.widget.ListView;
+
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -76,7 +76,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     }
     private View tag(String value) throws Exception { return ui(() -> surface.findViewWithTag(value)); }
     private View requireTag(String value) throws Exception { View found=tag(value);if(found==null)throw new AssertionError("Missing native view " + value);return found; }
-    private ListView timeline() throws Exception { return (ListView) requireTag("telegram-timeline"); }
+    private TimelineView timeline() throws Exception { return (TimelineView) requireTag("telegram-timeline"); }
     private void click(View view) throws Exception { ui(() -> { check(view.isEnabled(), "native action enabled: " + String.valueOf(view.getTag()));view.performClick();return null; });waitForIdleSync(); }
     private void render(JSONObject model) throws Exception { ui(() -> {surface.render(model);return null;});waitForIdleSync();SystemClock.sleep(90); }
     private JSONObject event(int from, String action) { for(int i=actions.size()-1;i>=from;i--)if(action.equals(actions.get(i).optString("action")))return actions.get(i);return null; }
@@ -94,10 +94,10 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private static String colorFor(String id){for(int i=0;i<AGENTS.length;i++)if(AGENTS[i].equals(id))return COLORS[i];return "#bcbcbc";}
     private static String name(String id){for(int i=0;i<AGENTS.length;i++)if(AGENTS[i].equals(id))return NAMES[i];return id;}
     private View row(int position) throws Exception {
-        ListView list=timeline();return ui(() -> list.getAdapter().getView(position,null,list));
+        TimelineView list=timeline();return ui(() -> list.getAdapter().getView(position,null,list));
     }
     private View rowForKey(String key) throws Exception {
-        ListView list=timeline();
+        TimelineView list=timeline();
         for(int i=0;i<ui(()->list.getAdapter().getCount());i++){
             View candidate=row(i);
             if(key.equals(candidate.getTag(TelegramSurface.TAG_ROW_KEY)))return candidate;
@@ -107,7 +107,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     private View messageRow(String id) throws Exception {return rowForKey("message:"+id);}
     private View localRow(String id) throws Exception {return rowForKey("local-request:"+JSONObject.quote(id));}
     private int rowPosition(String key) throws Exception {
-        ListView list=timeline();
+        TimelineView list=timeline();
         return ui(()->{
             for(int i=0;i<list.getAdapter().getCount();i++){
                 Object item=list.getAdapter().getItem(i);Field field=item.getClass().getDeclaredField("key");field.setAccessible(true);
@@ -117,7 +117,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         });
     }
     private Map<String,Long> dayRows() throws Exception {
-        ListView list=timeline();Map<String,Long> result=new HashMap<>();
+        TimelineView list=timeline();Map<String,Long> result=new HashMap<>();
         for(int i=0;i<ui(()->list.getAdapter().getCount());i++){
             final int position=i;View view=row(i);String key=String.valueOf(view.getTag(TelegramSurface.TAG_ROW_KEY));
             if(!key.startsWith("day:"))continue;
@@ -137,7 +137,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     }
     private boolean scrollDialog(AccessibilityNodeInfo node){
         if(node==null)return false;
-        if(node.isScrollable()&&node.getClassName()!=null&&node.getClassName().toString().contains("ListView")&&node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))return true;
+        if(node.isScrollable()&&node.getClassName()!=null&&node.getClassName().toString().contains("RecyclerView")&&node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD))return true;
         for(int i=0;i<node.getChildCount();i++)if(scrollDialog(node.getChild(i)))return true;return false;
     }
     private void dialogChoice(String text) throws Exception {
@@ -261,7 +261,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         }
         local.put("submissionState","accepted");render(model);
         Map<String,Long> dates=dayRows();check(dates.size()==3,"two chronological local days plus explicit unavailable date are separate");
-        ListView list=timeline();List<String> ordered=new ArrayList<>();
+        TimelineView list=timeline();List<String> ordered=new ArrayList<>();
         for(int i=0;i<ui(()->list.getAdapter().getCount());i++)ordered.add(String.valueOf(row(i).getTag(TelegramSurface.TAG_ROW_KEY)));
         check("older".equals(ordered.get(0))&&ordered.indexOf("message:same-id")<ordered.indexOf("local-request:"+JSONObject.quote("same-id"))
             &&ordered.indexOf("local-request:"+JSONObject.quote("same-id"))<ordered.indexOf("message:after"),"day dividers preserve older control and chronological request/public row order");
@@ -303,7 +303,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             View view=requireTag(id);Rect bounds=ui(()->{Rect r=new Rect();view.getGlobalVisibleRect(r);return r;});
             check(bounds.width()>0&&bounds.height()>0&&bounds.left>=root.left-1&&bounds.right<=root.right+1&&bounds.top>=root.top-1&&bounds.bottom<=root.bottom+1,label+" "+id+" remains visible inside viewport");
         }
-        ListView list=timeline();View compose=requireTag("telegram-composer");EditText draft=(EditText)requireTag("telegram-draft");
+        TimelineView list=timeline();View compose=requireTag("telegram-composer");EditText draft=(EditText)requireTag("telegram-draft");
         TextView report=ui(()->exactText(messageRow("m1"),LONG_TEXT));check(report!=null,label+" measures actual full-message typography");
         int listHeight=ui(()->list.getHeight()),usable=ui(()->list.getHeight()-list.getPaddingTop()-list.getPaddingBottom()),line=ui(()->report.getLineHeight()),composerHeight=ui(()->compose.getHeight());
         android.util.Log.i("DracoTelegramCheck","LAYOUT "+label+" root="+root.height()+" timeline="+listHeight+" usable="+usable+" messageLine="+line+" composer="+composerHeight+" draft="+ui(()->draft.getHeight()));
@@ -345,7 +345,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         JSONArray events=new JSONArray();long start=System.currentTimeMillis()-100000;
         for(int i=55;i>=0;i--)events.put(json("id","live-"+i,"agent","atlas","sessionId","physical-atlas","timestamp",start+i*1000,"preview",repeat("Synthetic operational evidence. ",8),"revision","same-"+i));
         feed.put("activity",events);render(feed);
-        ListView timeline=timeline();check(ui(()->timeline.getLastVisiblePosition())==ui(()->timeline.getAdapter().getCount()-1),"Activity enters at latest bottom despite newest-first incoming payload");
+        TimelineView timeline=timeline();check(ui(()->timeline.getLastVisiblePosition())==ui(()->timeline.getAdapter().getCount()-1),"Activity enters at latest bottom despite newest-first incoming payload");
         View firstEvent=rowForKey("activity:"+JSONObject.quote("atlas")+":"+JSONObject.quote("physical-atlas")+":"+JSONObject.quote("live-0"));
         check(firstEvent!=null,"chronological Activity retains earliest event identity");
         ui(()->{timeline.setSelectionFromTop(3,-8);return null;});waitForIdleSync();SystemClock.sleep(100);
@@ -396,16 +396,23 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         for(int i=0;i<40;i++)messages.put(json("id","cache-"+i,"role","assistant","text","Exact cached record "+i,
             "timestamp",start+i*1000,"fullAvailable",true,"canPin",true));
         model.put("messages",messages).put("pins",new JSONArray()).put("controlRunId","cache-run");render(model);
-        ListView timeline=timeline();BaseAdapter adapter=(BaseAdapter)ui(()->timeline.getAdapter());
+        TimelineView timeline=timeline();TimelineView.Adapter adapter=(TimelineView.Adapter)ui(()->timeline.getAdapter());
         int[] notifications={0},labelWrites={0};
-        DataSetObserver observer=new DataSetObserver(){@Override public void onChanged(){notifications[0]++;}};
+        androidx.recyclerview.widget.RecyclerView.AdapterDataObserver observer=new androidx.recyclerview.widget.RecyclerView.AdapterDataObserver(){
+            @Override public void onChanged(){notifications[0]++;}
+            @Override public void onItemRangeChanged(int a,int b){notifications[0]++;}
+            @Override public void onItemRangeChanged(int a,int b,Object payload){notifications[0]++;}
+            @Override public void onItemRangeInserted(int a,int b){notifications[0]++;}
+            @Override public void onItemRangeRemoved(int a,int b){notifications[0]++;}
+            @Override public void onItemRangeMoved(int a,int b,int c){notifications[0]++;}
+        };
         TextWatcher watcher=new TextWatcher(){
             public void beforeTextChanged(CharSequence s,int start,int count,int after){}
             public void onTextChanged(CharSequence s,int start,int before,int count){labelWrites[0]++;}
             public void afterTextChanged(Editable value){}
         };
         ui(()->{
-            adapter.registerDataSetObserver(observer);
+            adapter.registerAdapterDataObserver(observer);
             for(String id:new String[]{"telegram-title","telegram-stop-run","telegram-speed","telegram-send-mode","telegram-nav-chats"})
                 ((TextView)requireTag(id)).addTextChangedListener(watcher);
             return null;
@@ -419,7 +426,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         check(notifications[0]==0,"status draft and audio ticks do not notify unchanged timeline rows");
         check(labelWrites[0]==0,"polling and audio updates do not rewrite unchanged native toolbar labels");
         ui(()->{
-            adapter.unregisterDataSetObserver(observer);
+            adapter.unregisterAdapterDataObserver(observer);
             for(String id:new String[]{"telegram-title","telegram-stop-run","telegram-speed","telegram-send-mode","telegram-nav-chats"})
                 ((TextView)requireTag(id)).removeTextChangedListener(watcher);
             return null;
@@ -467,6 +474,30 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             "revision replacement drops cached expanded hierarchy and old evidence");
         before=actions.size();click(owner);check(event(before,"ownerDetail")==null,"cached old-revision owner-detail action cannot dispatch");
     }
+    private void recyclerGestures() throws Exception {
+        JSONObject model=base(true,"atlas");JSONArray messages=new JSONArray();
+        for(int n=0;n<45;n++)messages.put(json("id","gesture-"+n,"role",n%2==0?"assistant":"user","text","Gesture fixture "+n,"timestamp",System.currentTimeMillis()+n,"canReply",true));
+        model.put("messages",messages).put("work",new JSONArray()).put("pins",new JSONArray());render(model);
+        TimelineView list=timeline();check(ui(()->list.getLayoutManager()) instanceof androidx.recyclerview.widget.LinearLayoutManager,"timeline uses real RecyclerView layout and recycling");
+        final int position=rowPosition("message:gesture-30");ui(()->{list.scrollToPosition(position);return null;});waitForIdleSync();SystemClock.sleep(350);
+        int[] geometry=ui(()->{androidx.recyclerview.widget.RecyclerView.ViewHolder h=list.findViewHolderForAdapterPosition(position);if(h==null)throw new AssertionError("visible gesture holder");Rect r=new Rect();h.itemView.getGlobalVisibleRect(r);return new int[]{r.left+r.width()/5,r.centerY(),r.left+r.width()*4/5};});
+        int before=actions.size();long down=SystemClock.uptimeMillis();
+        sendPointerSync(MotionEvent.obtain(down,down,MotionEvent.ACTION_DOWN,geometry[0],geometry[1],0));
+        for(int n=1;n<=12;n++){SystemClock.sleep(18);sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_MOVE,geometry[0]+(geometry[2]-geometry[0])*n/12f,geometry[1],0));}
+        sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,geometry[2],geometry[1],0));SystemClock.sleep(450);waitForIdleSync();
+        JSONObject reply=event(before,"reply");check(exactScope(reply,"atlas")&&"gesture-30".equals(reply.getJSONObject("data").optString("id")),"real right-swipe replies only to the touched exact-scope row");
+        ui(()->{list.smoothScrollToPositionFromTop(rowPosition("message:gesture-10"),0);return null;});SystemClock.sleep(850);waitForIdleSync();
+        int first=ui(()->list.getFirstVisiblePosition());check(first<position,"Telegram-derived smooth scroller navigates real RecyclerView");
+        // The gesture captures origin at swipe start, not the replacement snapshot at release.
+        render(model);final int stalePosition=rowPosition("message:gesture-30");
+        ui(()->{list.scrollToPosition(stalePosition);return null;});waitForIdleSync();SystemClock.sleep(300);
+        geometry=ui(()->{Rect r=new Rect();list.findViewHolderForAdapterPosition(stalePosition).itemView.getGlobalVisibleRect(r);return new int[]{r.left+r.width()/5,r.centerY(),r.left+r.width()*4/5};});
+        before=actions.size();down=SystemClock.uptimeMillis();sendPointerSync(MotionEvent.obtain(down,down,MotionEvent.ACTION_DOWN,geometry[0],geometry[1],0));
+        sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis()+30,MotionEvent.ACTION_MOVE,geometry[2],geometry[1],0));SystemClock.sleep(70);
+        JSONObject replaced=new JSONObject(model.toString()).put("sessionId","physical-atlas-replacement");render(replaced);
+        sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,geometry[2],geometry[1],0));SystemClock.sleep(450);waitForIdleSync();
+        check(event(before,"reply")==null,"physical-session change during real swipe cannot retarget reply");
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -474,6 +505,9 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(activityField("profile").get(activity)==null,"target APK is unpaired; synthetic test cannot contact production");
             AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
             ui(()->{surface=new TelegramSurface(activity,(action,data)->{try{actions.add(json("action",action,"data",new JSONObject(data.toString())));}catch(Exception error){throw new AssertionError(error);}});activity.setContentView(surface);return null;});
+            if(flag("gesturesOnly")){
+                recyclerGestures();result.putString("stream","Recycler gestures passed: "+checks+". Synthetic data, no network/input dispatch.\n");finish(0,result);return;
+            }
             if(flag("workflowOnly")){
                 workflowControlLabels();
                 result.putString("stream","Workflow native checks passed: "+checks+". Unpaired APK, synthetic listener; no live agent input.\n");finish(0,result);return;

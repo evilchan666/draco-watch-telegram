@@ -23,6 +23,10 @@
     "Components/CubicBezierInterpolator.java": {
       "sha256": "747f7b8f511249f14bc1b567088d7e0da3639729263a6f56243eb61c2ba19387",
       "source": "TMessagesProj/src/main/java/org/telegram/ui/Components/CubicBezierInterpolator.java"
+    },
+    "Components/SmoothScroller.java": {
+      "sha256": "c0c7fc14c0386d3d1c97477ffad3eea2745689620e2b85b06f624ba98c62a1e3",
+      "source": "TMessagesProj/src/main/java/org/telegram/ui/Components/SmoothScroller.java"
     }
   }
 }

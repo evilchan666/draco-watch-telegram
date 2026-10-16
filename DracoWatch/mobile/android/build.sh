@@ -69,6 +69,20 @@ except Exception:
 PY
 fi
 
+mkdir -p "$build_root/assets/licenses"
+cp "$android_root/telegram/LICENSE" "$build_root/assets/licenses/GPL-2.0"
+cp "$android_root/telegram/NOTICE" "$build_root/assets/licenses/TELEGRAM-NOTICE"
+cp "$android_root/dependencies/LICENSE-APACHE-2.0" "$build_root/assets/licenses/APACHE-2.0"
+cp "$android_root/dependencies/NOTICE" "$build_root/assets/licenses/ANDROIDX-KOTLIN-NOTICE"
+python3 "$android_root/prepare-dependencies.py"
+mapfile -t dependency_jars < "$build_root/dependencies/jars.txt"
+dependency_cp=$(IFS=:; echo "${dependency_jars[*]}")
+dependency_resources=()
+while IFS= read -r resource_dir; do
+    resource_zip="$build_root/dependencies/$(basename "$(dirname "$resource_dir")").zip"
+    "$tools_root/aapt2" compile --dir "$resource_dir" -o "$resource_zip"
+    dependency_resources+=( -R "$resource_zip" )
+done < "$build_root/dependencies/resources.txt"
 "$tools_root/aapt2" compile --dir "$android_root/res" -o "$build_root/resources.zip"
 manifest_path="$android_root/AndroidManifest.xml"
 if [[ -n "${DRACO_VERSION_CODE:-}" || -n "${DRACO_VERSION_NAME:-}" ]]; then
@@ -86,15 +100,15 @@ PYVERSION
 fi
 "$tools_root/aapt2" link -o "$build_root/resources.apk" \
     --manifest "$manifest_path" -I "$android_jar" \
-    -R "$build_root/resources.zip" -A "$build_root/assets" \
+    "${dependency_resources[@]}" -R "$build_root/resources.zip" --extra-packages "$(cat "$build_root/dependencies/packages.txt")" -A "$build_root/assets" \
     --java "$build_root/generated" --auto-add-overlay
 mapfile -t java_sources < <(rg --files "$android_root/src" "$android_root/telegram/src" "$build_root/generated" -g '*.java')
 "$jdk_root/bin/javac" -source 8 -target 8 -Xlint:-options \
     -bootclasspath "$android_jar:$tools_root/core-lambda-stubs.jar" \
-    -d "$build_root/classes" "${java_sources[@]}"
+    -classpath "$dependency_cp" -d "$build_root/classes" "${java_sources[@]}"
 "$jdk_root/bin/jar" --create --file "$build_root/classes.jar" -C "$build_root/classes" .
 "$tools_root/d8" --release --min-api 26 --lib "$android_jar" \
-    --output "$build_root/dex" "$build_root/classes.jar"
+    --output "$build_root/dex" "$build_root/classes.jar" "${dependency_jars[@]}"
 cp -- "$build_root/resources.apk" "$build_root/unsigned.apk"
 (cd -- "$build_root/dex" && zip -q -X "$build_root/unsigned.apk" classes*.dex)
 "$tools_root/zipalign" -f -p 4 "$build_root/unsigned.apk" "$build_root/aligned.apk"

@@ -9,12 +9,13 @@ import android.os.Bundle;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.View;
+import android.view.MotionEvent;
 import android.view.ViewGroup;
 import android.view.MotionEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.webkit.WebView;
 import android.widget.EditText;
-import android.widget.ListView;
+
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -87,7 +88,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
     }
     private String rowsText() throws Exception {
         return ui(() -> {
-            ListView list = (ListView) requireTag("telegram-timeline"); StringBuilder text = new StringBuilder();
+            TimelineView list = (TimelineView) requireTag("telegram-timeline"); StringBuilder text = new StringBuilder();
             for (int i = 0; i < list.getAdapter().getCount(); i++) for (View v : descendants(list.getAdapter().getView(i, null, list))) if (v instanceof TextView) text.append(((TextView) v).getText()).append('\n');
             return text.toString();
         });
@@ -97,7 +98,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
         throw new AssertionError("Actual native rows did not receive expected text: " + expected);
     }
     private View revealRowControl(String control) throws Exception {
-        ListView list=(ListView)requireTag("telegram-timeline");
+        TimelineView list=(TimelineView)requireTag("telegram-timeline");
         int index=ui(()->{for(int i=0;i<list.getAdapter().getCount();i++)if(list.getAdapter().getView(i,null,list).findViewWithTag(control)!=null)return i;return -1;});
         if(index<0)throw new AssertionError("Actual native adapter has no control "+control);
         ui(()->{list.setSelection(index);return null;});waitForIdleSync();
@@ -111,7 +112,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
     }
     private boolean scrollDialog(AccessibilityNodeInfo n) {
         if (n == null) return false;
-        if (n.isScrollable() && n.getClassName() != null && n.getClassName().toString().contains("ListView") && n.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) return true;
+        if (n.isScrollable() && n.getClassName() != null && n.getClassName().toString().contains("RecyclerView") && n.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) return true;
         for (int i = 0; i < n.getChildCount(); i++) if (scrollDialog(n.getChild(i))) return true;
         return false;
     }
@@ -122,7 +123,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
         for (int i = 0; i < 5 && !n.isClickable() && n.getParent() != null; i++) n = n.getParent();
         boolean clicked = n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         if (!clicked) {
-            // Some Android ListView dialog rows advertise no clickable action
+            // Some Android TimelineView dialog rows advertise no clickable action
             // through their text node/parent despite occupying a touch target.
             // Inject a genuine screen tap, never call the app callback directly.
             AccessibilityNodeInfo fresh = exactNode(label);
@@ -237,7 +238,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
             View v = requireTag(key); Rect r = ui(() -> { Rect measured = new Rect(); v.getGlobalVisibleRect(measured); return measured; });
             check(r.width() > 0 && r.height() > 0 && r.left >= bounds.left - 1 && r.right <= bounds.right + 1 && r.top >= bounds.top - 1 && r.bottom <= bounds.bottom + 1, label + " integrated " + key + " fits within actual viewport");
         }
-        ListView list = (ListView) requireTag("telegram-timeline"); View composer = requireTag("telegram-composer"); EditText draft = (EditText) requireTag("telegram-draft");
+        TimelineView list = (TimelineView) requireTag("telegram-timeline"); View composer = requireTag("telegram-composer"); EditText draft = (EditText) requireTag("telegram-draft");
         int line = ui(() -> { for (int i = 0; i < list.getAdapter().getCount(); i++) for (View v : descendants(list.getAdapter().getView(i, null, list)))
             if (v instanceof TextView && PUBLIC_TEXT.equals(((TextView) v).getText().toString())) return ((TextView) v).getLineHeight(); return 0; });
         check(line > 0, label + " measures actual native full-message typography");
@@ -282,10 +283,43 @@ public final class TelegramBridgeChecks extends Instrumentation {
         jsCheck("bridgeChecks.calls.every(c=>c.method!=='POST'||c.path==='/v1/hold/release'||c.path==='/v1/diagnostics')&&!bridgeChecks.calls.some(c=>c.method==='PLAY-MEDIA')","only synthetic release and metadata posts; no work, media or source replay");
         check(field("profile").get(activity)==null,"workflow bridge remains unpaired");
     }
+    private void spatialCase() throws Exception {
+        if(flag("portrait"))check(ui(()->web.getHeight()>web.getWidth()),"verified actual portrait WebView geometry");
+        if(flag("landscape"))check(ui(()->web.getWidth()>web.getHeight()),"verified actual landscape WebView geometry");
+        click(requireTag("telegram-nav-environment"));waitShowing(false);
+        waitJs("!document.getElementById('view-environment').hidden");
+        js("window.scrollTo(0,0);document.getElementById('debug-open').click()");
+        waitJs("JSON.parse(document.getElementById('debug-content').textContent).local?.environment?.draws>0");
+        js("window.spatialBefore=JSON.parse(document.getElementById('debug-content').textContent).local.environment;document.getElementById('debug-close').click()");
+        jsCheck("spatialBefore.renderer==='webgl-perspective'&&spatialBefore.meshBuilds===1","Android WebView initializes retained WebGL perspective ship, not flat Canvas2D");
+        JSONObject rect=new JSONObject(js("(()=>{const r=document.getElementById('environment-canvas').getBoundingClientRect();return {x:r.x+r.width*.5,y:r.y+r.height*.35,w:innerWidth};})()"));
+        int[] origin=ui(()->{int[] p=new int[2];web.getLocationOnScreen(p);return p;});
+        float factor=ui(()->web.getWidth())/(float)rect.getDouble("w"),x=origin[0]+(float)rect.getDouble("x")*factor,y=origin[1]+(float)rect.getDouble("y")*factor;
+        long down=SystemClock.uptimeMillis();sendPointerSync(MotionEvent.obtain(down,down,MotionEvent.ACTION_DOWN,x,y,0));
+        for(int n=1;n<=14;n++){SystemClock.sleep(22);sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_MOVE,x+factor*n*4,y+factor*n,0));}
+        sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,x+factor*56,y+factor*14,0));SystemClock.sleep(450);
+        js("document.getElementById('debug-open').click();window.spatialAfter=JSON.parse(document.getElementById('debug-content').textContent).local.environment;document.getElementById('debug-close').click()");
+        jsCheck("Math.abs(spatialAfter.camera.yaw-spatialBefore.camera.yaw)>.1","real Android touch drag orbits perspective camera");
+        js("for(let i=0;i<25;i++)onDracoSnapshot(bridgeFixture())");SystemClock.sleep(500);
+        js("document.getElementById('debug-open').click();window.spatialUpdates=JSON.parse(document.getElementById('debug-content').textContent).local.environment;document.getElementById('debug-close').click()");
+        jsCheck("JSON.stringify(spatialUpdates.camera)===JSON.stringify(spatialAfter.camera)&&spatialUpdates.meshBuilds===1&&spatialUpdates.reportLayout==='dock'&&document.querySelectorAll('.environment-bubble').length===0","Android feed refresh preserves camera, static hull and one stable report dock");
+        screenshot("spatial-orbit");
+        js("document.querySelector('[data-agent=forge].environment-agent').click();document.querySelector('.spatial-actions').scrollIntoView({block:'center'})");
+        jsCheck("document.querySelector('.spatial-inspector h3').textContent==='FORGE'&&!document.body.classList.contains('chat-open')","Android station selection inspects without forced chat transition");
+        jsCheck("(()=>{const b=document.querySelector('.spatial-actions').getBoundingClientRect(),n=document.querySelector('.bottom-nav').getBoundingClientRect();return b.bottom<=n.top+1&&b.left>=0&&b.right<=innerWidth;})()","inspection actions reachable above phone navigation without overlap");
+        screenshot("spatial-inspector");
+        js("document.querySelector('.spatial-actions button').click()");waitShowing(true);
+        check(ui(()->((TextView)requireTag("telegram-title")).getText().toString()).contains("FORGE"),"spatial inspector opens exact selected native conversation");
+        assertBoundary("spatial Android bridge");
+    }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
             activity = startActivitySync(new Intent().setClassName(getTargetContext().getPackageName(), "org.omega.dracowatch.MonitorActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); waitForIdleSync();
+            if(flag("portrait")||flag("landscape")){
+                ui(()->{activity.setRequestedOrientation(flag("landscape")?android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);return null;});
+                waitForIdleSync();SystemClock.sleep(600);
+            }
             check(field("profile").get(activity) == null, "unpaired target cannot contact production");
             web = (WebView) field("web").get(activity); surface = (TelegramSurface) field("telegram").get(activity);
             for (int i = 0; i < 100 && !field("loaded").getBoolean(activity); i++) SystemClock.sleep(100);
@@ -296,6 +330,9 @@ public final class TelegramBridgeChecks extends Instrumentation {
             ui(() -> { web.reload(); return null; });
             waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'");
             installTestBoundary();
+            if (flag("spatialOnly")) {
+                spatialCase();result.putString("stream","Spatial Android bridge passed: "+checks+". Real WebGL/touch/nav; synthetic feed, no production input.\n");finish(0,result);return;
+            }
             if (flag("workflowOnly")) {
                 workflowCase();
                 result.putString("stream", "Targeted workflow bridge checks passed: " + checks + ". Actual unpaired Activity/WebView/native controls, fresh phase/hold revocation and exact synthetic release; no live input or control.\n");

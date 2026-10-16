@@ -559,3 +559,94 @@ body.reduced-motion *, body.reduced-motion *::before, body.reduced-motion *::aft
 .record-dialog .button-row { display:flex; flex-wrap:wrap; gap:6px; }
 .record-dialog button { min-height:48px; }
 .record-dialog .quiet-note { font-size:.7rem; line-height:1.25; }
+
+/* Spatial observatory: camera surface and a retained, readable inspection dock. */
+.environment-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.environment-caption { margin: 0; }
+.environment-stage { grid-area: auto !important; min-height: 180px; background: #07070b; border-color: #4c3440; }
+#environment-canvas { touch-action: none; cursor: grab; }
+#environment-canvas:active { cursor: grabbing; }
+.spatial-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.spatial-label { position: absolute; left: 0; top: 0; margin-left: -42px; margin-top: -10px; width: 84px; text-align: center; font: 700 10px system-ui; letter-spacing: .07em; color: var(--agent); text-shadow: 0 2px 4px #000, 0 0 8px #000; }
+.spatial-label.selected { color: #fff; }
+.spatial-label[data-status=unknown] { color: #999; }
+.spatial-render-note { position: absolute; left: 12px; bottom: 8px; right: 12px; pointer-events: none; font-size: .7rem; color: #ddd; margin: 0; }
+.environment-toolbar { margin: 0; padding: 0; justify-content: center; width: 100%; flex-wrap: wrap; }
+.environment-toolbar button { background: #1d141b; border-color: #6d3d4d; }
+.environment-stations { display: flex !important; flex-wrap: nowrap; overflow-x: auto; gap: 8px; padding: 0 0 4px; grid-area: auto !important; }
+.environment-agent { flex: 0 0 auto; min-height: 44px; padding: 8px 14px; border-radius: 24px; }
+.environment-agent[aria-pressed=true] { background: color-mix(in srgb, var(--agent) 14%, #101013); border-color: var(--agent); }
+.spatial-inspector { background: linear-gradient(120deg, #1c171e, #101015); border: 1px solid #49404b; border-left: 3px solid var(--agent); border-radius: 14px; padding: 14px; min-width: 0; }
+.spatial-inspector-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+.spatial-inspector h3 { color: var(--agent); font-size: 1rem; margin: 0; }
+.spatial-inspector-state { color: #e3dfe4; font-size: .8rem; margin: 0; }
+.spatial-operation { font-size: .75rem; line-height: 1.5; color: #b9afb9; margin: 8px 0; }
+.spatial-report-detail { padding-top: 8px; border-top: 1px solid #43323e; }
+.spatial-report-detail small { color: #b9a8b4; font-size: .7rem; }
+.spatial-report { font-size: .85rem; line-height: 1.55; margin: 4px 0 10px; overflow-wrap: anywhere; }
+.spatial-pin { font-size: .75rem; line-height: 1.5; color: #e7d0b8; }
+.spatial-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.spatial-actions button { border: 1px solid #6d495b; border-radius: 9px; background: #241a23; color: #fff; padding: 8px 12px; min-height: 44px; font-size: .8rem; }
+.spatial-reports-off .spatial-report-detail { display: none; }
+.environment-note { margin: 0; }
+@media(min-width: 850px), (orientation: landscape) and (min-width: 650px) {
+  .environment-view { grid-template-columns: minmax(0, 1.5fr) minmax(250px, 1fr); align-items: start; }
+  .environment-caption { grid-column: 1 / -1; }
+  .environment-stage { grid-column: 1 !important; grid-row: 2 / span 4 !important; }
+  .environment-toolbar { grid-column: 2 !important; grid-row: 2 !important; }
+  .environment-stations { grid-column: 2 !important; grid-row: 3 !important; flex-wrap: wrap; }
+  .spatial-inspector { grid-column: 2; grid-row: 4; }
+  .environment-note { grid-column: 2; }
+}
+body[data-view=environment]:not(.chat-open) .app-header,
+body[data-view=environment]:not(.chat-open) .connection-bar { display: none; }
+.spatial-report { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.spatial-operation { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.environment-note { display: none; }
+@media(orientation:portrait) {
+  .environment-view { gap: 8px; }
+  .environment-caption .eyebrow { display: none; }
+  .spatial-inspector { padding: 10px 12px; }
+  .spatial-actions { margin-top: 4px; }
+  .spatial-actions button { padding: 6px 9px; }
+}
+.environment-stage .environment-toolbar { position: absolute; bottom: 8px; left: 8px; right: 8px; width: auto; z-index: 2; gap: 4px; padding: 4px; border: 0; background: #09090ccc; border-radius: 12px; }
+.environment-stage .environment-toolbar button { min-width: 44px; min-height: 44px; padding: 0 10px; font-size: .8rem; }
+.environment-stage .environment-toolbar span { font-size: .65rem; }
+.spatial-inspector { grid-row: auto; }
+@media(orientation:portrait) {
+  .environment-caption { order: 0; }
+  .environment-stage { order: 1; }
+  .environment-stations { order: 2; }
+  .spatial-inspector { order: 3; }
+  .environment-view { display: flex; flex-direction: column; }
+  .environment-stage { flex: 0 0 auto; width: 100%; }
+  .environment-stations { width: 100%; }
+  .spatial-inspector { width: 100%; box-sizing: border-box; }
+  .spatial-inspector-state { font-size: .75rem; }
+}
+@media (orientation:landscape) and (min-width:650px), (min-width:850px) {
+  .environment-stations { grid-row: 2 !important; }
+  .spatial-inspector { grid-row: 3; }
+}
+
+/* Camera controls get their own rail: they never cover a creature or label. */
+.environment-stage { display: flex; flex-direction: column; }
+#environment-canvas { flex: 1 1 auto; min-height: 0; height: 0; }
+.spatial-labels { bottom: 56px; }
+.environment-stage .environment-toolbar { position: relative; flex: 0 0 auto; inset: auto; margin: 0; padding: 5px; border-top: 1px solid #42303b; border-radius: 0; background: #100e14; }
+.spatial-render-note { bottom: 62px; }
+.spatial-sidebar { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+@media(orientation:portrait) { .spatial-sidebar { order: 2; } }
+@media (orientation:landscape) and (min-width:650px), (min-width:850px) {
+  .environment-stage { grid-row: 2 !important; }
+  .spatial-sidebar { grid-column: 2; grid-row: 2; max-height: calc(100dvh - var(--nav-h) - 90px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-bottom: 4px; }
+  .spatial-sidebar .environment-stations { flex-wrap: nowrap; flex: 0 0 auto; }
+  .spatial-sidebar .spatial-inspector { flex: 0 0 auto; }
+}
+
+/* Accessibility text can make the fixed navigation taller than its baseline. */
+body[data-view=environment] .app-shell { padding-bottom: calc(var(--spatial-nav-height, var(--nav-h)) + 18px); }
+@media (orientation:landscape) and (min-width:650px), (min-width:850px) {
+  .spatial-sidebar { max-height: calc(100dvh - var(--spatial-nav-height, var(--nav-h)) - 90px); }
+}

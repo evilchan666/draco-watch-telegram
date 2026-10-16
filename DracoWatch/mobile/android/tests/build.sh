@@ -12,7 +12,7 @@ mkdir -p "$output_root/classes" "$output_root/dex"
 # Transport/callback regressions exercise current source even when the target APK
 # is the previous signed release. This is an instrumentation-only override;
 # it does not rebuild or replace the production application's APK/assets.
-"$jdk_root/bin/javac" -source 8 -target 8 -Xlint:-options -bootclasspath "$sdk_root/platforms/android-35/android.jar:$tools_root/core-lambda-stubs.jar" -classpath "$native_root/build/classes" -d "$output_root/classes" \
+"$jdk_root/bin/javac" -source 8 -target 8 -Xlint:-options -bootclasspath "$sdk_root/platforms/android-35/android.jar:$tools_root/core-lambda-stubs.jar" -classpath "$native_root/build/classes:$(paste -sd: "$native_root/build/dependencies/jars.txt")" -d "$output_root/classes" \
     "$native_root/src/org/omega/dracowatch/DracoClient.java" \
     "$native_root/src/org/omega/dracowatch/NativeCallbacks.java" \
     "$native_root/src/org/omega/dracowatch/MonitorActivity.java" \

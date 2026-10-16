@@ -23,14 +23,16 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
-import android.widget.AbsListView;
-import android.widget.BaseAdapter;
+import androidx.recyclerview.widget.RecyclerView;
+import androidx.recyclerview.widget.DiffUtil;
+import androidx.recyclerview.widget.ItemTouchHelper;
+
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.ListView;
+
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -118,7 +120,7 @@ public final class TelegramSurface extends FrameLayout {
     private final SeekBar audioSeek;
     private final LinearLayout audioPanel;
     private final Button activityFilter;
-    private final ListView list;
+    private final TimelineView list;
     private final SurfaceAdapter adapter;
     private final TextView jump;
     private final LinearLayout compose;
@@ -266,29 +268,45 @@ public final class TelegramSurface extends FrameLayout {
 
         FrameLayout body = new FrameLayout(context);
         shell.addView(body, new LinearLayout.LayoutParams(-1, 0, 1));
-        list = new ListView(context);
+        list = new TimelineView(context);
         list.setTag("telegram-timeline");
-        list.setDivider(null);
-        list.setDividerHeight(0);
         list.setClipToPadding(false);
         list.setPadding(dp(6), dp(8), dp(6), dp(52));
-        list.setCacheColorHint(Color.TRANSPARENT);
-        list.setTranscriptMode(AbsListView.TRANSCRIPT_MODE_DISABLED);
         adapter = new SurfaceAdapter();
         list.setAdapter(adapter);
-        list.setOnScrollListener(new AbsListView.OnScrollListener() {
-            @Override public void onScrollStateChanged(AbsListView view, int state) {
-                if (state == AbsListView.OnScrollListener.SCROLL_STATE_TOUCH_SCROLL) followLive = listAtEnd;
+        list.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override public void onScrollStateChanged(RecyclerView view,int value) {
+                if(value==RecyclerView.SCROLL_STATE_DRAGGING)followLive=listAtEnd;
             }
-            @Override public void onScroll(AbsListView view, int first, int count, int total) {
-                View last = list.getChildAt(count - 1);
-                listAtEnd = total == 0 || first + count >= total
-                    && (last == null || last.getBottom() <= list.getHeight() - list.getPaddingBottom() + dp(8));
-                if (!replacingRows && listAtEnd) { followLive = true; unreadTimeline = 0; }
-                else if (!replacingRows) followLive = false;
+            @Override public void onScrolled(RecyclerView view,int dx,int dy) {
+                listAtEnd=!list.canScrollVertically(1);
+                if(!replacingRows){followLive=listAtEnd;if(listAtEnd)unreadTimeline=0;}
                 updateJump();
             }
         });
+        new ItemTouchHelper(new ItemTouchHelper.SimpleCallback(0,ItemTouchHelper.RIGHT){
+            private String swipeKey="";
+            private JSONObject swipeScope;
+            @Override public void onSelectedChanged(RecyclerView.ViewHolder holder,int actionState){
+                super.onSelectedChanged(holder,actionState);
+                if(holder!=null&&actionState==ItemTouchHelper.ACTION_STATE_SWIPE){
+                    int p=holder.getBindingAdapterPosition();
+                    swipeKey=p>=0&&p<adapter.rows.size()?adapter.rows.get(p).key:"";
+                    swipeScope=scope();
+                }
+            }
+            @Override public boolean onMove(RecyclerView r,RecyclerView.ViewHolder a,RecyclerView.ViewHolder b){return false;}
+            @Override public int getSwipeDirs(RecyclerView r,RecyclerView.ViewHolder h){
+                int p=h.getBindingAdapterPosition();if(!chat||p<0||p>=adapter.rows.size())return 0;
+                Row row=adapter.rows.get(p);return "message".equals(row.type)&&!row.value.optBoolean("localSubmission")&&row.value.optBoolean("canReply")?ItemTouchHelper.RIGHT:0;
+            }
+            @Override public void onSwiped(RecyclerView.ViewHolder h,int direction){
+                int p=h.getBindingAdapterPosition();if(p<0||p>=adapter.rows.size())return;
+                Row row=adapter.rows.get(p);adapter.notifyItemChanged(p);
+                if(swipeScope!=null&&sameScope(swipeScope)&&swipeKey.equals(row.key)&&chat&&"message".equals(row.type)&&!row.value.optBoolean("localSubmission")&&row.value.optBoolean("canReply"))withScope(swipeScope,()->emit("reply",data("id",row.value.optString("id"))));
+            }
+            @Override public float getSwipeThreshold(RecyclerView.ViewHolder h){return .35f;}
+        }).attachToRecyclerView(list);
         body.addView(list, new FrameLayout.LayoutParams(-1, -1));
 
         jump = text(13, TEXT, true);
@@ -707,6 +725,7 @@ public final class TelegramSurface extends FrameLayout {
     }
 
     private void updateRows(boolean changedConversation) {
+        final String previousRowContext=rowContext;
         JSONArray content = payload.optJSONArray(chat ? "messages" : "activity".equals(viewName) ? "activity" : "roster");
         JSONArray sessionWork = chat ? payload.optJSONArray("work") : null;
         JSONArray palette = new JSONArray();
@@ -771,16 +790,27 @@ public final class TelegramSurface extends FrameLayout {
         for (Row row : rows) timelineNewestTime = Math.max(timelineNewestTime, orderTime(row.value.opt("timestamp")));
         while (seenTimelineKeys.size() > 4096) seenTimelineKeys.remove(seenTimelineKeys.iterator().next());
         replacingRows = true;
+        final ArrayList<RowBinding> beforeBindings=new ArrayList<>();
+        for(int n=0;n<adapter.rows.size();n++)beforeBindings.add(adapter.binding(n));
+        final ArrayList<Row> beforeRows=new ArrayList<>(adapter.rows);
         adapter.rows.clear();
         adapter.rows.addAll(rows);
         HashSet<String> presentRevisions = new HashSet<>();
         for (Row row : rows) if ("activity".equals(row.type)) presentRevisions.add(expansionKey(row));
         expanded.retainAll(presentRevisions);
         adapter.retainCurrentRowViews();
-        adapter.notifyDataSetChanged();
+        final ArrayList<RowBinding> afterBindings=new ArrayList<>();
+        for(int n=0;n<adapter.rows.size();n++)afterBindings.add(adapter.binding(n));
+        DiffUtil.DiffResult diff=DiffUtil.calculateDiff(new DiffUtil.Callback(){
+            public int getOldListSize(){return beforeRows.size();}
+            public int getNewListSize(){return adapter.rows.size();}
+            public boolean areItemsTheSame(int a,int b){return beforeRows.get(a).key.equals(adapter.rows.get(b).key);}
+            public boolean areContentsTheSame(int a,int b){return !changedConversation && previousRowContext.equals(rowContext) && beforeBindings.get(a).equals(afterBindings.get(b));}
+        },false);
+        diff.dispatchUpdatesTo(adapter);
         final String expectedIdentity = identity;
         if ((chat || "activity".equals(viewName)) && follow) list.post(() -> { if (identity.equals(expectedIdentity)) { jumpToLatest(); replacingRows = false; } });
-        else if (!changedConversation && !anchor.isEmpty()) {
+        else if (!changedConversation && !anchor.isEmpty() && list.getScrollState()==RecyclerView.SCROLL_STATE_IDLE) {
             for (int i = 0; i < rows.size(); i++) if (rows.get(i).key.equals(anchor)) {
                 final int position = i;
                 list.post(() -> { if (identity.equals(expectedIdentity)) { list.setSelectionFromTop(position, offset); replacingRows = false; updateJump(); } });
@@ -1184,7 +1214,7 @@ public final class TelegramSurface extends FrameLayout {
 
     private void jumpToLatest() {
         if (adapter.rows.isEmpty()) return;
-        list.setSelection(adapter.rows.size() - 1);
+        list.scrollToPosition(adapter.rows.size() - 1);
         listAtEnd = true;
         followLive = true; unreadTimeline = 0;
         updateJump();
@@ -1198,7 +1228,7 @@ public final class TelegramSurface extends FrameLayout {
         jump.setVisibility(showing() && (chat || "activity".equals(viewName)) && !listAtEnd ? VISIBLE : GONE);
     }
 
-    private final class SurfaceAdapter extends BaseAdapter {
+    private final class SurfaceAdapter extends TimelineView.Adapter {
         final ArrayList<Row> rows = new ArrayList<>();
         // Own only discarded convertViews handed to getView, never returned
         // views that ListView may still hold in its own recycler. Exact rows
@@ -1230,7 +1260,7 @@ public final class TelegramSurface extends FrameLayout {
         @Override public int getCount() { return rows.size(); }
         @Override public Object getItem(int position) { return rows.get(position); }
         @Override public long getItemId(int position) { return stableId(rows.get(position).key); }
-        @Override public boolean hasStableIds() { return true; }
+        SurfaceAdapter() { setHasStableIds(true); }
         @Override public boolean areAllItemsEnabled() { return false; }
         @Override public boolean isEnabled(int position) {
             String type = rows.get(position).type;

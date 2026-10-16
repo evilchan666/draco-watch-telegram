@@ -98,65 +98,37 @@ test('native text zoom is counted once while browser simulation honors the combi
   assert.equal(resolveFontScale(12,1,1),1);assert.equal(resolveFontScale(24,1,1),2,'Actual computed font enlargement remains conservative');
 });
 
-function environmentFixture(width,height,{status='idle',phase=0,zoom=1,pan={x:0,y:0}}={}){
-  const environmentSource=fs.readFileSync(new URL('../environment.js',import.meta.url),'utf8'),scope={window:{DracoChamber:{SPECS:specs,ellipse(){}}}};
-  vm.runInNewContext(environmentSource,scope);
-  const renderer=Object.create(scope.window.DracoEnvironment.Environment.prototype);Object.assign(renderer,{width,height,zoom,pan,actors:new Map(specs.map((spec,index)=>[spec.id,{observed:true,status,pose:status==='active'?1:0,target:status==='active'?1:0,clock:phase+index*2.7,workOffset:0}]))});return renderer;
-}
-function assertClear(points,boxes,width,height){
-  assert.equal(boxes.packed,true,`Packing failed at ${width}×${height}`);assert.equal(boxes.length,6);
-  for(const box of boxes){assert.ok(box.width>=44&&box.height>=44);assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=width+.01&&box.y+box.height<=height+.01);
-    for(const point of points){if(!Number.isFinite(point.x)||!Number.isFinite(point.y))continue;const r=point.radius||0;assert.ok(box.x+box.width<=point.x-r||box.x>=point.x+r||box.y+box.height<=point.y-r||box.y>=point.y+r,`Bubble ${box.id} masks ${point.id} at ${width}×${height}`);}
-  }
-  for(const [index,a] of boxes.entries())for(const b of boxes.slice(index+1))assert.ok(a.x+a.width<=b.x||b.x+b.width<=a.x||a.y+a.height<=b.y||b.y+b.height<=a.y,'Bubbles overlap');
-}
-
-test('real projected idle bodies stay clear, including narrow room and short landscape',()=>{
-  const {layoutBubbles,projectActors}=helper();
-  for(const [width,height] of [[298,316.8125],[308,421],[320,640],[338,421],[360,490],[412,520],[735,247],[780,280],[1100,600]]){
-    const points=projectActors(environmentFixture(width,height),specs),boxes=layoutBubbles(points,{width,height});assertClear(points,boxes,width,height);
-  }
-});
-
-test('moving bodies remain clear while previous bubble slots are retained wherever possible',()=>{
-  const {layoutBubbles,projectActors}=helper();
-  for(const [width,height] of [[298,316.8125],[308,421],[338,421],[735,247]]){
-    let previous=[];
-    for(const phase of [0,6,7,8,10,12,13,16,19,20,21]){
-      const points=projectActors(environmentFixture(width,height,{status:'active',phase}),specs),boxes=layoutBubbles(points,{width,height,previous});assertClear(points,boxes,width,height);previous=boxes;
-    }
-  }
-});
-
-test('zoomed, panned and enlarged-text room layouts never cover visible creature bounds',()=>{
-  const {layoutBubbles,projectActors}=helper();
-  for(const [width,height] of [[298,316.8125],[308,421],[338,421],[735,247]])for(const zoom of [1,2.5])for(const pan of [{x:0,y:0},{x:width*.4,y:height*.4}]){
-    const points=projectActors(environmentFixture(width,height,{status:'active',phase:13,zoom,pan}),specs);
-    const boxes=layoutBubbles(points,{width,height,preferredWidth:150,preferredHeight:124,compactHeight:95});assertClear(points,boxes,width,height);
-  }
-});
-
 test('impossible body coverage is reported as a packing limit rather than attested as clear',()=>{
   const {layoutBubbles}=helper(),points=specs.map(spec=>({id:spec.id,x:80,y:80,radius:160})),boxes=layoutBubbles(points,{width:160,height:160});
   assert.equal(boxes.packed,false);assert.equal(boxes.limit,'INSUFFICIENT_CLEAR_CANVAS_FOR_SIX_44PX_BUBBLES');
 });
 
-test('insufficient clear room space uses readable report-list fallback and preserves visibility/lifecycle',()=>{
+// 0.4.0 retires floating report packing. Legacy pure helper fixtures above stay
+// for compatibility; real 3D camera/context/layout is in spatial-experience-check.
+test('retained inspector is independent of moving geometry and preserves selected-session public text',()=>{
   class Element {
-    constructor(){this.hidden=false;this.dataset={};this.children=[];this.attributes=new Map();this.style={setProperty(){}};this.classList={toggle(){}};}
+    constructor(){this.hidden=false;this.dataset={};this.children=[];this.attributes=new Map();this.events=new Map();this.style={setProperty(){}};this.classList={toggle(){}};}
     append(...children){this.children.push(...children);}
     after(node){this.afterNode=node;}
-    addEventListener(){}
+    addEventListener(name,callback){this.events.set(name,callback);}
     setAttribute(key,value){this.attributes.set(key,value);}
     remove(){this.removed=true;}
   }
-  const doc={hidden:false,createElement:()=>new Element(),createElementNS:()=>new Element(),addEventListener(){},removeEventListener(){}};
-  const {Bubbles}=helper({document:doc,ResizeObserver:class{observe(){}disconnect(){}}});
-  let scale=10;const renderer={width:298,height:316.8125,zoom:1,pan:{x:0,y:0},actors:new Map(specs.map(spec=>[spec.id,{}])),scene:()=>({scale,ox:0,oy:0}),actorPosition:()=>({x:15,z:15}),point:()=>({x:15,y:15})};
-  const stage=new Element(),bubbles=new Bubbles({stage,renderer,specs});bubbles.update([],agents(),{live:true});bubbles.show(true);
-  assert.equal(bubbles.layer.dataset.packing,'list');assert.equal(bubbles.layer.hidden,false);assert.equal(bubbles.notice.hidden,false);assert.equal(stage.afterNode,bubbles.notice);assert.match(bubbles.notice.textContent,/enlarged text readable/);assert.ok([...bubbles.cards.values()].every(card=>card.button.dataset.density==='regular'));
-  doc.hidden=true;bubbles.onVisibility();assert.equal(bubbles.notice.hidden,true);doc.hidden=false;bubbles.onVisibility();assert.equal(bubbles.notice.hidden,false);
-  bubbles.show(false);assert.equal(bubbles.layer.hidden,true);assert.equal(bubbles.notice.hidden,true);
-  scale=.01;bubbles.show(true);assert.equal(bubbles.layer.dataset.packing,'clear');assert.equal(bubbles.layer.hidden,false);assert.equal(bubbles.notice.hidden,true);
-  bubbles.destroy();assert.equal(bubbles.layer.removed,true);assert.equal(bubbles.notice.removed,true);
+  const doc={createElement:()=>new Element()};
+  const {Bubbles}=helper({document:doc}),selected=[];
+  const renderer={get width(){throw Error('Inspector must not sample moving scene geometry');}};
+  const stage=new Element(),inspector=new Bubbles({stage,renderer,specs,select:id=>selected.push(id)});
+  const rows=agents(),messages=specs.map(spec=>message(spec.id));
+  inspector.update(messages,rows,{live:true,now,selected:'atlas'});inspector.show(true);
+  const textNode=inspector.text,layer=inspector.layer;
+  assert.equal(layer.dataset.packing,'dock');assert.equal(layer.hidden,false);assert.equal(stage.afterNode,layer);
+  assert.match(textNode.textContent,/Public report atlas/);
+  for(let i=0;i<25;i++){inspector.layout();inspector.update(messages,rows,{live:true,now:now+i,selected:'atlas'});}
+  assert.equal(inspector.text,textNode);assert.equal(inspector.layer,layer);assert.match(textNode.textContent,/Public report atlas/);
+  inspector.update(messages,rows,{live:true,now,selected:'forge'});assert.equal(inspector.heading.textContent,'forge');assert.match(textNode.textContent,/Public report forge/);
+  layer.children.at(-1).children[0].events.get('click')();assert.deepEqual(selected,['forge']);
+  rows.set('forge',{status:'active',sessionId:'replacement'});inspector.update(messages,rows,{live:true,now,selected:'forge'});
+  assert.ok(!textNode.textContent.includes('Public report forge'),'replacement session cannot reuse old public speech');
+  inspector.show(false);assert.equal(layer.hidden,true);inspector.show(true);assert.equal(layer.hidden,false);
+  inspector.destroy();assert.equal(layer.removed,true);
 });

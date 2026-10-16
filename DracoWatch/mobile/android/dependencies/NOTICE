@@ -1,0 +1,10 @@
+AndroidX RecyclerView, Core, Core KTX, CustomView, PoolingContainer,
+Collection and Annotation: Copyright The Android Open Source Project.
+Kotlin standard library: Copyright JetBrains s.r.o. and Kotlin contributors.
+All are licensed under Apache License 2.0 (LICENSE-APACHE-2.0).
+Exact binary versions, repository coordinates and hashes: manifest.json.
+Source artifacts use the same URL directory, replacing .aar/.jar with
+-sources.jar (annotation uses annotation-jvm for JVM sources).
+The binaries are retained for deterministic offline builds, not changing
+dependency resolution. The application and Telegram-derived parts retain
+their existing GPL-2.0-or-later terms and corresponding source.
