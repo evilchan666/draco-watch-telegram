@@ -719,7 +719,7 @@ public final class TelegramSurface extends FrameLayout {
         // physical conversation/run and formatting context, not a display ID
         // or a hash alone. Audio ticks, draft edits and status-only refreshes
         // deliberately do not invalidate unchanged timeline rows.
-        rowContext = new JSONArray().put(viewName).put(chat).put(appScale).put(nativeFontScale)
+        rowContext = new JSONArray().put(viewName).put(chat).put(Float.toString(appScale)).put(Float.toString(nativeFontScale))
             .put(TimeZone.getDefault().getID()).put(Locale.getDefault().toString())
             .put(payload.optString("agent")).put(payload.optString("sessionKey"))
             .put(payload.optString("sessionId")).put(payload.optString("controlRunId"))
