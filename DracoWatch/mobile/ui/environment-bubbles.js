@@ -191,16 +191,19 @@
         const sample=this.cards.values().next().value,computed=typeof window.getComputedStyle==='function'?parseFloat(window.getComputedStyle(sample.text).fontSize):12;
         this.fontScale=resolveFontScale(computed,this.nativeFontScale,this.appFontScale);
       }
-      this.lines.setAttribute('viewBox',`0 0 ${width} ${height}`);
-      const geometry=[width,height,this.renderer.zoom,this.renderer.pan?.x,this.renderer.pan?.y,this.fontScale].join(':');
-      if(!force&&this.limited&&geometry===this.geometry)return;
+      const viewBox=`0 0 ${width} ${height}`;if(this.lines.getAttribute('viewBox')!==viewBox)this.lines.setAttribute('viewBox',viewBox);
+      const geometry=[width,height,this.renderer.zoom,this.renderer.pan?.x,this.renderer.pan?.y,this.fontScale,points.map(point=>point.id).join(',')].join(':');
+      // A snapshot/visibility callback must not turn a settled report list back
+      // into floating cards just because a creature walked to a different spot.
+      // Retry fitting only on a real camera/size/type/visible-report-set change.
+      if(this.limited&&geometry===this.geometry)return;
       if(geometry!==this.geometry){this.placements=[];this.geometry=geometry;}
       const boxes=layoutBubbles(points,{width,height,bodyPoints,preferredWidth:Math.min(180,140+24*(this.fontScale-1)),preferredHeight:84+50*(this.fontScale-1),compactHeight:60+45*(this.fontScale-1),previous:this.placements});this.placements=boxes;
       // A 44px hit target is not proof that its report is readable. Never reduce
       // six reports to the single truncated word/chips shown on the S25 Ultra.
       const overhead=boxes.density==='compact'?14+12.5*this.fontScale:22+26*this.fontScale;
       this.limited=!boxes.packed||boxes.density==='chip'||boxes.some(box=>box.height<=58||box.height-overhead<30*this.fontScale);
-      this.layer.dataset.packing=this.limited?'list':'clear';this.layer.classList.toggle('environment-bubbles-list',this.limited);this.layer.hidden=false;this.notice.hidden=!this.limited;
+      const packing=this.limited?'list':'clear';if(this.layer.dataset.packing!==packing){this.packingChanges=(this.packingChanges||0)+1;this.layer.dataset.packing=packing;}this.layer.classList.toggle('environment-bubbles-list',this.limited);this.layer.hidden=false;this.notice.hidden=!this.limited;
       if(this.limited){
         this.placements=[];
         if(this.layer.parentElement===this.stage){if(this.stage.parentElement?.append)this.stage.parentElement.append(this.notice,this.layer);else this.stage.after(this.notice,this.layer);}

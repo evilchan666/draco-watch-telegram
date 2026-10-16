@@ -33,6 +33,7 @@
       this.rows=new Map();this.actors=new Map();this.selected='atlas';this.active=false;this.live=false;this.motion=true;
       this.frame=0;this.previous=0;this.lastDraw=0;this.clock=0;this.pointers=new Map();this.hits=[];
       this.backdrop=null;this.backdropKey='';this.sprites=new Map();
+      this.performance={draws:0,resizes:0,drawMs:[],frameMs:[]};
       canvas.style.touchAction='pan-y';
       canvas.addEventListener('pointerdown',event=>{
         this.pointers.set(event.pointerId,{x:event.clientX,y:event.clientY,startX:event.clientX,startY:event.clientY,time:performance.now(),multi:false});
@@ -94,12 +95,17 @@
       // remove duplicated decorative header/help rather than shrinking text.
       document.body.classList.toggle('environment-compact',available()<220);
       const height=Math.max(64,Math.floor(available()));
-      stage.style.setProperty('--environment-height',height+'px');this.resize();
+      if(stage.style.getPropertyValue('--environment-height')!==height+'px')stage.style.setProperty('--environment-height',height+'px');this.resize();
     }
     resize(){
       const rect=this.canvas.getBoundingClientRect();if(!rect.width||!rect.height)return;
-      this.width=rect.width;this.height=rect.height;this.dpr=Math.min(this.dprLimit,window.devicePixelRatio||1);
-      this.canvas.width=Math.round(this.width*this.dpr);this.canvas.height=Math.round(this.height*this.dpr);
+      const dpr=Math.min(this.dprLimit,window.devicePixelRatio||1),width=Math.round(rect.width*dpr),height=Math.round(rect.height*dpr);
+      if(this.width===rect.width&&this.height===rect.height&&this.dpr===dpr&&this.canvas.width===width&&this.canvas.height===height)return;
+      this.width=rect.width;this.height=rect.height;this.dpr=dpr;
+      this.performance.resizes++;
+      // Assigning even an unchanged canvas dimension destroys its backing store
+      // and context state. Repeated inset/viewport notifications are not resizes.
+      if(this.canvas.width!==width)this.canvas.width=width;if(this.canvas.height!==height)this.canvas.height=height;
       this.boundPan();this.draw();
     }
     quality(lightweight){const limit=lightweight?1.5:2,rate=lightweight?30:60;if(limit===this.dprLimit&&rate===this.fps)return;this.dprLimit=limit;this.fps=rate;this.lastDraw=0;this.resize();}
@@ -122,7 +128,7 @@
       }
       if(!this.live||!this.motion)this.stopFrame();if(this.active)this.draw();this.schedule();
     }
-    show(active){this.active=active===true;if(this.active){this.resize();this.schedule();}else{this.stopFrame();this.pointers.clear();this.pinch=0;}}
+    show(active){const changed=this.active!==(active===true);this.active=active===true;if(this.active){this.resize();if(changed)this.draw();this.schedule();}else{this.stopFrame();this.pointers.clear();this.pinch=0;}}
     stopFrame(){cancelAnimationFrame(this.frame);this.frame=0;this.previous=0;}
     destroy(){this.show(false);this.observer.disconnect();this.viewportObserver.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);this.destroyed=true;}
     schedule(){
@@ -131,6 +137,7 @@
         this.frame=0;
         if(this.destroyed||!this.active||!this.live||!this.motion||document.hidden){this.previous=0;return;}
         if(time-this.lastDraw>=1000/this.fps-1){
+          if(this.previous){this.performance.frameMs.push(time-this.previous);if(this.performance.frameMs.length>120)this.performance.frameMs.shift();}
           const dt=this.previous?Math.min(.08,(time-this.previous)/1000):0;this.previous=time;this.lastDraw=time;this.clock+=dt;
           this.advance(dt);
           this.draw();
@@ -179,6 +186,7 @@
     }
     draw(){
       const ctx=this.ctx;if(this.destroyed||!this.active||!ctx||this.width<100||this.height<100)return;
+      const started=performance.now();
       const w=this.width,h=this.height,s=this.scene();ctx.setTransform(this.dpr,0,0,this.dpr,0,0);
       ctx.fillStyle='#05090e';ctx.fillRect(0,0,w,h);
       ctx.save();ctx.translate(w/2+this.pan.x,h/2+this.pan.y);ctx.scale(this.zoom,this.zoom);ctx.translate(-w/2,-h/2);
@@ -188,6 +196,11 @@
       for(let i=0;i<SPECS.length;i++)this.drawActor(ctx,s,SPECS[i],i);
       ctx.restore();this.drawLabels(ctx,s);ctx.restore();
       this.onFrame?.();
+      this.performance.draws++;this.performance.drawMs.push(performance.now()-started);if(this.performance.drawMs.length>120)this.performance.drawMs.shift();
+    }
+    diagnostics(){
+      const percentile=(values,fraction)=>{if(!values.length)return null;const sorted=values.slice().sort((a,b)=>a-b);return Math.round(sorted[Math.min(sorted.length-1,Math.floor(sorted.length*fraction))]*100)/100;};
+      return {renderer:'canvas2d-top-down',active:this.active,live:this.live,motion:this.motion,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,draws:this.performance.draws,resizes:this.performance.resizes,sampleLimit:120,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,drawCpuP95Ms:percentile(this.performance.drawMs,.95),rafIntervalP95Ms:percentile(this.performance.frameMs,.95),scope:'Recent WebView drawing and RAF intervals; not GPU presentation or native-chat frame timing'};
     }
     drawBackdrop(ctx,s){
       const key=[this.width,this.height,this.dpr].join(':');
