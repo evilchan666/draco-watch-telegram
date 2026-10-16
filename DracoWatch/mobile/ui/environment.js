@@ -25,9 +25,8 @@
   const SPAWN={x:0,z:3,yaw:-.9724,pitch:0};
   class Mesh {
     constructor(){this.data=[];this.faces=[];}
-    tri(a,b,c,rgba,lit=true){
-      const light=lit?.48+.50*Math.abs(dot(norm(cross(sub(b,a),sub(c,a))),[-.462, .770, .346])):1;
-      const tint=rgba.map((v,i)=>i<3?v*light:v);for(const p of [a,b,c])this.data.push(...p,...tint,0,0);this.faces.push({p:[a,b,c],c:tint});
+    tri(a,b,c,rgba,lit=true,normals=null){
+      const normal=lit?norm(cross(sub(b,a),sub(c,a))):[0,0,0];for(const [i,p] of [a,b,c].entries())this.data.push(...p,...rgba,0,0,...(normals?.[i]||normal));this.faces.push({p:[a,b,c],c:rgba.map((v,i)=>i<3?v*(lit?.48+.5*Math.abs(dot(normal,[-.462,.770,.346])):1):v)});
     }
     quad(a,b,c,d,rgba,lit=true){this.tri(a,b,c,rgba,lit);this.tri(a,c,d,rgba,lit);}
     box(x,y,z,w,h,d,hex){const a=x-w/2,b=x+w/2,c=z-d/2,e=z+d/2,t=y+h,tint=color(hex);this.quad([a,y,c],[b,y,c],[b,t,c],[a,t,c],tint);this.quad([b,y,e],[a,y,e],[a,t,e],[b,t,e],tint);this.quad([a,y,e],[a,y,c],[a,t,c],[a,t,e],tint);this.quad([b,y,c],[b,y,e],[b,t,e],[b,t,c],tint);this.quad([a,t,c],[b,t,c],[b,t,e],[a,t,e],tint);this.quad([a,y,e],[b,y,e],[b,y,c],[a,y,c],tint);}
@@ -43,57 +42,153 @@
     disk(x,y,z,r,hex,alpha=1,segments=48){for(let i=0;i<segments;i++){const a=i*2*Math.PI/segments,b=(i+1)*2*Math.PI/segments;this.tri([x,y,z],[x+Math.cos(a)*r,y,z+Math.sin(a)*r],[x+Math.cos(b)*r,y,z+Math.sin(b)*r],color(hex,1,alpha),false);}}
     ring(x,y,z,r,hex,width=.025,alpha=1,start=0,end=Math.PI*2){const steps=Math.ceil(64*(end-start)/(Math.PI*2));for(let i=0;i<steps;i++){const a=start+i*(end-start)/steps,b=start+(i+1)*(end-start)/steps;this.quad([x+Math.cos(a)*r,y,z+Math.sin(a)*r],[x+Math.cos(b)*r,y,z+Math.sin(b)*r],[x+Math.cos(b)*(r-width),y,z+Math.sin(b)*(r-width)],[x+Math.cos(a)*(r-width),y,z+Math.sin(a)*(r-width)],color(hex,1,alpha),false);}}
     cylinder(x,y,z,r,h,hex,segments=48){for(let i=0;i<segments;i++){const a=i*Math.PI*2/segments,b=(i+1)*Math.PI*2/segments,p=[x+Math.cos(a)*r,z+Math.sin(a)*r],q=[x+Math.cos(b)*r,z+Math.sin(b)*r];this.tri([x,y+h,z],[p[0],y+h,p[1]],[q[0],y+h,q[1]],color(hex));this.quad([p[0],y,p[1]],[q[0],y,q[1]],[q[0],y+h,q[1]],[p[0],y+h,p[1]],color(hex,.85));}}
+    // These primitives have real thickness. Agent geometry is retained once per
+    // identity; navigation changes only model/view matrices, never a sprite.
+    ellipsoid(x,y,z,rx,ry,rz,hex,slices=18,bands=12){
+      const at=(u,v)=>[x+Math.sin(v)*Math.cos(u)*rx,y+Math.cos(v)*ry,z+Math.sin(v)*Math.sin(u)*rz],normal=p=>norm([(p[0]-x)/(rx*rx),(p[1]-y)/(ry*ry),(p[2]-z)/(rz*rz)]),rgba=color(hex);
+      for(let j=0;j<bands;j++)for(let i=0;i<slices;i++){const u=i*2*Math.PI/slices,v=j*Math.PI/bands,a=at(u,v),b=at(u+2*Math.PI/slices,v),c=at(u+2*Math.PI/slices,v+Math.PI/bands),d=at(u,v+Math.PI/bands);this.tri(a,b,c,rgba,true,[normal(a),normal(b),normal(c)]);this.tri(a,c,d,rgba,true,[normal(a),normal(c),normal(d)]);}
+    }
+    // Extruded silhouette in the XY plane, front at positive Z.
+    extrude(points,z,depth,hex,front=hex){const tint=color(hex),face=color(front),cx=points.reduce((n,p)=>n+p[0],0)/points.length,cy=points.reduce((n,p)=>n+p[1],0)/points.length;
+      for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length];this.tri([cx,cy,z+depth/2],[a[0],a[1],z+depth/2],[b[0],b[1],z+depth/2],face);this.tri([cx,cy,z-depth/2],[b[0],b[1],z-depth/2],[a[0],a[1],z-depth/2],tint);this.quad([a[0],a[1],z-depth/2],[b[0],b[1],z-depth/2],[b[0],b[1],z+depth/2],[a[0],a[1],z+depth/2],tint);}
+    }
+    tube(a,b,r,hex,segments=8){const axis=norm(sub(b,a)),u=norm(cross(axis,Math.abs(axis[1])<.9?[0,1,0]:[1,0,0])),v=cross(axis,u),at=(p,t)=>p.map((n,i)=>n+r*(u[i]*Math.cos(t)+v[i]*Math.sin(t)));
+      for(let i=0;i<segments;i++){const t=i*2*Math.PI/segments,n=(i+1)*2*Math.PI/segments;this.quad(at(a,t),at(b,t),at(b,n),at(a,n),color(hex));this.tri(a,at(a,n),at(a,t),color(hex));this.tri(b,at(b,t),at(b,n),color(hex));}
+    }
+    torus(x,y,z,r,tube,hex,tilt=0,segments=36,sides=6){const c=Math.cos(tilt),s=Math.sin(tilt),at=(u,v)=>{const px=(r+Math.cos(v)*tube)*Math.cos(u),py=(r+Math.cos(v)*tube)*Math.sin(u),pz=Math.sin(v)*tube;return [x+px,y+py*c-pz*s,z+py*s+pz*c];},normal=(u,v)=>[Math.cos(v)*Math.cos(u),Math.cos(v)*Math.sin(u)*c-Math.sin(v)*s,Math.cos(v)*Math.sin(u)*s+Math.sin(v)*c],rgba=color(hex);
+      for(let i=0;i<segments;i++)for(let j=0;j<sides;j++){const u=i*2*Math.PI/segments,v=j*2*Math.PI/sides,du=2*Math.PI/segments,dv=2*Math.PI/sides,a=at(u,v),b=at(u+du,v),c=at(u+du,v+dv),d=at(u,v+dv),na=normal(u,v),nb=normal(u+du,v),nc=normal(u+du,v+dv),nd=normal(u,v+dv);this.tri(a,b,c,rgba,true,[na,nb,nc]);this.tri(a,c,d,rgba,true,[na,nc,nd]);}
+    }
+    gem(x,y,z,w,h,d,hex){const belt=[[x-w,y,z],[x,y,z+d],[x+w,y,z],[x,y,z-d]];for(let i=0;i<4;i++){const a=belt[i],b=belt[(i+1)%4];this.tri([x,y+h,z],a,b,color(hex,i%2?1:.76));this.tri([x,y-h,z],b,a,color(hex,i%2?.64:.9));}}
     shadow(x,y,z,r){for(let i=0;i<5;i++)this.disk(x,y+i*.001,z,r*(1-i*.13),'#01060b',.035+i*.018);}
   }
   function buildShip(){
     const m=new Mesh();
-    // Human-scale architecture surrounds the local player. The floor is not a
-    // floating model or overview board; walls, beams and stations share meters.
-    m.box(0,-.18,0,14.4,.18,20.4,'#15202a');
-    m.box(0,-.01,0,13.92,.025,19.92,'#18252f');
-    for(let x=-6;x<=6;x+=2)m.box(x,.018,0,.015,.006,19.7,'#31414c');
-    for(let z=-9;z<=9;z+=2)m.box(0,.019,z,13.7,.006,.015,'#31414c');
-    // Unobstructed centre aisle, narrow red edge guides and floor lights.
-    for(const x of [-1.5,1.5]){m.box(x,.026,0,.026,.008,18.2,'#71323f');for(let z=-8;z<=8;z+=2)m.box(x,.033,z,.04,.009,.35,'#b66b72');}
+    // A continuous human-scale interior rather than six objects on a neon tray.
+    // The circulation lane, sight lines and original solid console colliders stay
+    // unchanged. Fine seams are quiet; daylight and task bays provide depth.
+    m.box(0,-.18,0,14.4,.18,20.4,'#121b24');
+    m.box(0,-.01,0,13.92,.025,19.92,'#273541');
+    for(let z=-8;z<=8;z+=4)m.box(0,.018,z,13.8,.004,.016,'#17252f');
+    for(const x of [-1.6,1.6]){m.box(x,.019,0,.024,.005,18.3,'#17252f');for(const z of [-7.5,-2.5,2.5,7.5])m.box(x,.024,z,.035,.006,.42,'#acbac0');}
+    // A centre runner establishes forward travel without a glowing floor grid.
+    m.box(0,.014,0,2.9,.009,18.4,'#1e2d38');
     for(const x of [-7.1,7.1]){
-      m.box(x,0,0,.2,ROOM.height,20.4,'#1a2a36');
-      m.box(x-Math.sign(x)*.12,.12,0,.035,.19,20,'#4b6370');
-      m.box(x-Math.sign(x)*.12,3.9,0,.04,.12,20,'#506b78');
-      for(const z of [-8,-3,2,7]){m.box(x-Math.sign(x)*.18,0,z,.18,ROOM.height,.18,'#354c5a');m.box(x-Math.sign(x)*.29,2.7,z,.035,.62,.035,'#b35c6e');}
+      m.box(x,0,0,.2,ROOM.height,20.4,'#263845');
+      m.box(x-Math.sign(x)*.13,.08,0,.04,.2,20,'#506572');
+      m.box(x-Math.sign(x)*.12,3.95,0,.05,.12,20,'#536e7e');
+      for(const z of [-8,-3,2,7]){
+        m.box(x-Math.sign(x)*.2,0,z,.24,ROOM.height,.22,'#607784');
+        m.box(x-Math.sign(x)*.33,2.0,z,.028,.95,.09,'#d3e1df');
+      }
+      // Recessed upper panels are opaque architectural material, not status.
+      for(const z of [-5,0,5]){m.box(x-Math.sign(x)*.14,1.14,z,.055,2.45,4.45,'#1a2d3b');m.box(x-Math.sign(x)*.19,3.50,z,.05,.035,3.9,'#91b4c6');}
     }
-    m.box(0,0,10.1,14.4,ROOM.height,.2,'#20313c');
-    // A readable aft doorway, without implying an unimplemented destination.
-    m.box(0,0,9.95,2.4,2.8,.12,'#0b141d');m.box(-1.25,0,9.82,.14,3,.16,'#627987');m.box(1.25,0,9.82,.14,3,.16,'#627987');m.box(0,2.9,9.82,2.65,.14,.16,'#904354');
-    // Forward observation wall: glass covers the whole room end. Fixed stars
-    // are decorative architecture, never live telemetry or another world.
-    m.box(0,0,-10.1,14.4,.55,.2,'#2a3b48');m.box(0,4.25,-10.1,14.4,.55,.2,'#2a3b48');
-    m.quad([-7,.55,-10],[7,.55,-10],[7,4.25,-10],[-7,4.25,-10],color('#071b2a'),false);
-    for(const x of [-6.9,-3.5,0,3.5,6.9])m.box(x,.5,-9.91,.09,3.8,.14,'#4b6877');
-    for(let n=0;n<86;n++){const x=Math.sin(n*23.7)*6.8,y=.7+(Math.sin(n*7.1)+1)*1.65,r=n%7===0?.014:.006;m.quad([x-r,y-r,-9.98],[x+r,y-r,-9.98],[x+r,y+r,-9.98],[x-r,y+r,-9.98],color(n%5?'#799caa':'#d2e8ec',1,n%3?.6:1),false);}
-    // Ceiling frame and recessed light bands maintain scale while looking up.
-    m.box(0,4.8,0,14.4,.12,20.4,'#111e28');
-    for(const x of [-5.9,-2.2,2.2,5.9])m.box(x,4.65,0,.11,.11,19.8,'#3a5260');
-    for(const z of [-7.5,-2.5,2.5,7.5]){m.box(0,4.49,z,14,.18,.15,'#2d4251');m.box(0,4.47,z,5.5,.022,.1,'#9bbac5');}
+    m.box(0,0,10.1,14.4,ROOM.height,.2,'#253946');
+    m.box(0,0,9.95,2.4,2.8,.12,'#101c27');m.box(-1.25,0,9.82,.14,3,.16,'#68828e');m.box(1.25,0,9.82,.14,3,.16,'#68828e');m.box(0,2.9,9.82,2.65,.14,.16,'#ad5762');
+    m.box(0,0,-10.1,14.4,.55,.2,'#344c5b');m.box(0,4.25,-10.1,14.4,.55,.2,'#344c5b');
+    m.quad([-7,.55,-10],[7,.55,-10],[7,4.25,-10],[-7,4.25,-10],color('#122b3d'),false);
+    // A restrained horizon makes the observation wall spatially legible. It is
+    // decorative, never a simulated live external world or a destination.
+    m.quad([-7,.55,-9.995],[7,.55,-9.995],[7,1.15,-9.995],[-7,1.15,-9.995],color('#345365'),false);
+    m.quad([-7,1.15,-9.994],[7,1.15,-9.994],[7,1.18,-9.994],[-7,1.18,-9.994],color('#8ba8b5'),false);
+    for(const x of [-6.9,-3.5,0,3.5,6.9])m.box(x,.5,-9.91,.09,3.8,.14,'#6c8997');
+    for(let n=0;n<56;n++){const x=Math.sin(n*23.7)*6.8,y=1.4+(Math.sin(n*7.1)+1)*1.25,r=n%7===0?.012:.005;m.quad([x-r,y-r,-9.98],[x+r,y-r,-9.98],[x+r,y+r,-9.98],[x-r,y+r,-9.98],color(n%5?'#799caa':'#d2e8ec',1,n%3?.6:1),false);}
+    m.box(0,4.8,0,14.4,.12,20.4,'#1b2a35');
+    for(const x of [-5.9,5.9])m.box(x,4.65,0,.12,.12,19.8,'#72828b');
+    for(const z of [-7.5,-2.5,2.5,7.5]){m.box(0,4.49,z,14,.18,.18,'#455c6b');m.box(0,4.465,z,4.8,.026,.11,'#c5d7db');}
     for(const {spec,x,z} of STATIONS){
-      // Person-height work alcoves with original creature art hovering above a
-      // console. These six solid consoles are also the navigation colliders.
-      m.shadow(x,.03,z,1.35);m.platform(x,.02,z,2.6,.12,2.6,.32,'#30434f');
-      m.platform(x,.14,z,2.35,.64,2.25,.22,'#243744');m.platform(x,.78,z,2.5,.12,2.4,.24,'#465b67');
-      m.platform(x,.9,z,2.32,.035,2.18,.21,'#12232e');
-      m.ring(x,.94,z+.08,.8,spec.color,.026,.7);
-      m.platform(x,.94,z-.82,1.85,.3,.42,.16,'#2b4657');m.box(x,1.24,z-.82,1.68,.025,.32,'#081b27');
-      m.box(x-.46,1.27,z-.82,.46,.012,.024,spec.color);m.box(x+.3,1.27,z-.82,.65,.012,.016,'#7598a9');
-      m.box(x,.25,z+1.14,.8,.055,.028,spec.color);
-      // Colour is a restrained identity locator, not a claim of current work.
-      m.box(x-Math.sign(x)*1.19,.25,z,.035,.42,1.1,spec.color);
+      // Sculpted graphite bases and open work surfaces replace thick neon slabs.
+      // Footprints deliberately retain the existing collision contract.
+      m.shadow(x,.03,z,1.33);m.platform(x,.02,z,2.6,.12,2.6,.32,'#1b2b36');
+      m.platform(x,.14,z,2.18,.59,2.1,.22,'#203340');m.platform(x,.73,z,2.5,.10,2.4,.24,'#6a8089');
+      m.platform(x,.83,z,2.32,.105,2.18,.21,'#233c49');
+      m.disk(x,.942,z+.08,.70,'#101f29',1,40);m.ring(x,.945,z+.08,.72,'#8ba0aa',.018,1);
+      m.ring(x,.948,z+.08,.69,spec.color,.018,.68,-.45,1.15);
+      m.platform(x,.94,z-.82,1.75,.18,.38,.12,'#314b5b');m.box(x,1.12,z-.82,1.58,.024,.28,'#0b1e2b');
+      m.box(x-.46,1.146,z-.82,.38,.008,.018,spec.color);m.box(x+.3,1.146,z-.82,.60,.008,.014,'#7295a5');
+      m.box(x,.25,z+1.065,.75,.045,.028,spec.color);
+      // Locator accents are identity only, never an animated work assertion.
+      m.box(x-Math.sign(x)*1.10,.40,z,.022,.045,.40,spec.color);
     }
     return m;
   }
-  function buildCompatibilityRoom(){const m=new Mesh();m.box(0,-.12,0,14.4,.12,20.4,'#18252f');m.box(0,4.8,0,14.4,.12,20.4,'#111e28');for(const x of [-7.1,7.1])m.box(x,0,0,.2,4.8,20.4,'#1a2a36');m.box(0,0,10.1,14.4,4.8,.2,'#20313c');m.box(0,0,-10.1,14.4,4.8,.2,'#071b2a');for(const x of [-1.5,1.5])m.box(x,.015,0,.035,.01,18.2,'#71323f');for(const z of [-7.5,-2.5,2.5,7.5])m.box(0,4.49,z,14,.18,.15,'#506b78');for(const {spec,x,z} of STATIONS){m.box(x,.02,z,2.6,.76,2.6,'#243744');m.box(x,.78,z,2.5,.15,2.4,'#465b67');m.box(x,.94,z-.82,1.85,.3,.42,'#2b4657');m.box(x,.25,z+1.31,.8,.05,.025,spec.color);m.box(x-Math.sign(x)*1.31,.25,z,.025,.42,1.1,spec.color);}return m;}
+  function buildActor(spec){
+    const m=new Mesh(),silver='#a1b6c2',steel='#526b7b',dark='#162c3c',edge='#cfdee3',accent=spec.color;
+    const shell=(x,y,z,rx,ry,rz,hex=steel)=>m.ellipsoid(x,y,z,rx,ry,rz,hex,18,12);
+    const visor=(width=.36,y=.94,z=.31)=>{m.box(0,y,z,width,.075,.055,'#081b27');m.box(0,y+.006,z+.031,width*.74,.029,.012,accent);};
+    const pods=()=>{for(const side of [-1,1]){shell(side*.35,.88,0,.13,.22,.17,silver);shell(side*.39,.88,.10,.055,.09,.06,dark);}};
+    const core=()=>{shell(0,.88,0,.31,.44,.26,silver);shell(0,.9,.19,.245,.33,.13,dark);shell(0,.91,.28,.18,.25,.035,'#466474');visor();m.gem(0,.65,.302,.055,.068,.04,accent);};
+    if(spec.kind==='orbital'){
+      pods();core();m.torus(0,.91,0,.58,.036,silver,1.16,40,7);m.torus(0,.9,.03,.37,.018,accent,.2,36,6);
+      for(const side of [-1,1]){shell(side*.56,.91,0,.06,.07,.07,edge);m.box(side*.56,.91,.062,.045,.024,.012,accent);}
+      m.tube([0,1.28,-.01],[0,1.42,-.03],.025,silver);m.gem(0,1.43,-.03,.04,.05,.04,accent);
+    }else if(spec.kind==='furnace'){
+      const outline=[[-.30,.46],[.30,.46],[.38,.55],[.38,1.25],[.27,1.36],[-.27,1.36],[-.38,1.25],[-.38,.55]];
+      m.extrude(outline,0,.48,steel,silver);m.extrude([[-.24,.61],[.24,.61],[.26,1.16],[.18,1.22],[-.18,1.22],[-.26,1.16]],.255,.035,dark,dark);
+      m.extrude([[-.13,.70],[.13,.70],[.17,1.13],[-.17,1.13]],.282,.035,'#503b2d','#bc7045');
+      m.gem(0,.89,.325,.10,.23,.045,accent);m.gem(.055,.91,.34,.045,.11,.025,'#f6c68a');
+      for(const side of [-1,1]){m.box(side*.42,.70,0,.10,.5,.38,steel);for(let j=0;j<4;j++)m.box(side*.335,.72+j*.10,.268,.08,.033,.025,'#0d202c');m.tube([side*.28,.48,0],[side*.38,.39,0],.04,silver);}
+      m.box(0,1.35,.02,.37,.055,.32,'#bdc3bd');m.box(0,.49,.26,.24,.035,.02,accent);
+    }else if(spec.kind==='crystal'){
+      // Six-facet double-ended solid: no rotating camera-facing diamond card.
+      const ring=[];for(let i=0;i<6;i++){const t=i*Math.PI/3;ring.push([Math.cos(t)*.39,.91,Math.sin(t)*.30]);}
+      for(let i=0;i<6;i++){const a=ring[i],b=ring[(i+1)%6];m.tri([0,1.58,0],a,b,color(i%2?'#c6cd89':'#e0e4b4'));m.tri([0,.27,0],b,a,color(i%2?'#647344':'#a3af6e'));}
+      m.torus(0,.91,0,.47,.023,silver,Math.PI/2,36,6);m.torus(0,.91,0,.49,.012,accent,.33,32,5);
+      for(const side of [-1,1])m.gem(side*.48,.91,0,.045,.09,.045,silver);
+      m.gem(0,.91,.31,.055,.12,.025,'#f7fac8');
+    }else if(spec.kind==='winged'||spec.kind==='architect'){
+      // Layered extruded feathers curve in depth. Each wing is volumetric from
+      // the aisle and side view, keeping the silver/ice identity's outline.
+      for(const side of [-1,1])for(let j=0;j<4;j++){
+        const x=.15+j*.035,y=.91-j*.105,tip=.72+j*.035,top=1.64-j*.115;
+        m.extrude([[side*x,y],[side*(x+.12),y+.32],[side*tip,top],[side*(tip-.04),top-.27],[side*(x+.19),y-.02]],-.075-j*.07,.058,j%2?'#6f91a6':'#91afc0',j%2?'#adc9d7':'#d9e7ed');
+        m.tube([side*(x+.07),y+.03,-.02-j*.07],[side*(tip-.06),top-.13,-.02-j*.07],.012,'#e0f1f6',5);
+      }
+      m.gem(0,.92,.045,.23,.50,.20,'#a9cddd');m.gem(0,.94,.23,.10,.22,.025,'#e2f3f8');
+      m.torus(0,.93,0,.37,.017,silver,.03,36,6);m.torus(0,.93,0,.42,.013,'#ccdfeb',.65,32,5);
+      m.gem(0,1.51,0,.045,.065,.04,edge);m.gem(0,.36,0,.045,.065,.04,edge);
+    }else{
+      pods();core();
+      if(spec.kind==='mantis')for(const side of [-1,1]){
+        m.extrude([[side*.12,1.13],[side*.36,1.36],[side*.55,1.70],[side*.52,1.32],[side*.30,.96]],-.02,.13,silver,steel);
+        m.tube([side*.32,1.29,.065],[side*.48,1.52,.065],.018,accent,6);
+        m.extrude([[side*.24,.73],[side*.43,.62],[side*.49,.42],[side*.36,.55]],0,.11,steel,silver);
+      }
+      if(spec.kind==='filament'){
+        for(const side of [-1,1])for(let j=0;j<3;j++){
+          const a=[side*(.10+j*.055),1.18,-.05],b=[side*(.23+j*.11),1.40-j*.035,-.06-j*.09],c=[side*(.25+j*.13),1.65-j*.10,-.12-j*.11];
+          m.tube(a,b,.018,'#7c9e93',6);m.tube(b,c,.012,silver,6);shell(...c,.037,.044,.037,accent);
+        }
+        m.torus(0,.69,0,.49,.018,silver,1.30,36,6);
+      }
+    }
+    // A lower keel and two locator points establish hovering body scale. Their
+    // colour is identity, not fabricated productive activity.
+    if(spec.kind!=='crystal'&&spec.kind!=='winged'&&spec.kind!=='architect'){m.gem(0,.40,0,.12,.10,.10,steel);for(const side of [-1,1])m.gem(side*.16,.45,.12,.035,.04,.025,accent);}
+    m.faces.length=0;return m;
+  }
+  function buildLocalHand(side){
+    const m=new Mesh(),arm='#263f4d',metal='#879ba5',rubber='#172c38';
+    // Authored glove/forearm, not a weapon. The wrist and articulated knuckles
+    // have volume under the same lighting as the room. Kept below the reticle.
+    m.tube([side*.085,-.61,-.34],[0,-.405,-.60],.071,arm,10);
+    m.tube([side*.02,-.432,-.57],[0,-.375,-.635],.077,metal,10);
+    m.ellipsoid(0,-.355,-.66,.075,.036,.105,rubber,14,9);
+    m.ellipsoid(0,-.325,-.652,.062,.012,.068,metal,12,7);m.ellipsoid(0,-.353,-.552,.058,.047,.012,metal,12,7);for(let j=0;j<3;j++)m.box((j-1)*.026,-.333,-.537,.013,.023,.012,rubber);
+    for(let i=0;i<4;i++){
+      const x=(i-1.5)*.033,y=-.308-Math.abs(i-1.5)*.009,z=-.74+Math.abs(i-1.5)*.008;
+      m.tube([x,y,z+.035],[x,y-.027,z-.018],.017,metal,7);m.ellipsoid(x,y-.035,z-.012,.018,.025,.025,rubber,10,6);
+    }
+    m.tube([-side*.063,-.36,-.65],[-side*.094,-.39,-.70],.023,metal,8);m.ellipsoid(-side*.09,-.395,-.705,.025,.023,.03,rubber,10,6);
+    // A quiet red wrist identifier keeps the local operator separate from the
+    // six agents. It does not react to network/work state.
+    m.box(0,-.359,-.605,.068,.014,.018,'#9e4f59');for(let i=0;i<m.data.length;i+=12){m.data[i]*=.60;m.data[i+1]=m.data[i+1]*.60-.10;m.data[i+2]=m.data[i+2]*.60-.15;}m.faces.length=0;return m;
+  }
+  function buildCompatibilityRoom(){const m=new Mesh();m.box(0,-.12,0,14.4,.12,20.4,'#18252f');m.box(0,4.8,0,14.4,.12,20.4,'#111e28');for(const x of [-7.1,7.1])m.box(x,0,0,.2,4.8,20.4,'#1a2a36');m.box(0,0,10.1,14.4,4.8,.2,'#20313c');m.box(0,0,-10.1,14.4,4.8,.2,'#071b2a');for(const x of [-1.5,1.5])m.box(x,.015,0,.035,.01,18.2,'#71323f');for(const z of [-7.5,-2.5,2.5,7.5])m.box(0,4.49,z,14,.18,.15,'#506b78');for(const {spec,x,z} of STATIONS){m.box(x,.02,z,2.6,.76,2.6,'#243744');m.box(x,.78,z,2.5,.15,2.4,'#465b67');m.box(x,.94,z-.82,1.85,.3,.42,'#2b4657');m.box(x,.25,z+1.31,.8,.05,.025,spec.color);m.box(x-Math.sign(x)*1.31,.40,z,.025,.045,.40,spec.color);}return m;}
   class Environment {
     constructor(canvas,{select,zoomChanged,onFrame,onTarget}={}){
       Object.assign(this,{canvas,select,zoomChanged,onFrame,onTarget,width:1,height:1,dpr:1,dprLimit:2,fps:60,zoom:1,pan:{x:0,y:0},yaw:SPAWN.yaw,pitch:SPAWN.pitch,rows:new Map(),actors:new Map(),selected:'atlas',active:false,live:false,motion:true,frame:0,dirty:false,clock:0,previous:0,lastDraw:0,pointers:new Map(),hits:[],sprites:new Map(),textures:new Map(),lost:false,destroyed:false});
-      this.focused=null;this.player={x:SPAWN.x,z:SPAWN.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS};this.movement={x:0,z:0};this.keys=new Set();this.target=null;this.targetSignature='';this.fov=1.22;
+      this.lookSensitivity=1;this.actorMeshes=new Map(SPECS.map(spec=>[spec.id,buildActor(spec)]));this.actorBuffers=new Map();this.selectionMeshes=new Map(SPECS.map(spec=>{const mesh=new Mesh();mesh.ring(0,.011,0,.75,spec.color,.022,.85,-.4,1.2);return [spec.id,mesh];}));this.selectionBuffers=new Map();this.handMeshes=[buildLocalHand(-1),buildLocalHand(1)];this.handBuffers=[];this.focused=null;this.player={x:SPAWN.x,z:SPAWN.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS};this.movement={x:0,z:0};this.keys=new Set();this.target=null;this.targetSignature='';this.fov=1.22;
       this.performance={draws:0,resizes:0,drawMs:[],frameMs:[],meshBuilds:1};this.mesh=buildShip();
       try{this.gl=canvas.getContext('webgl',{alpha:false,antialias:true,powerPreference:'low-power',preserveDrawingBuffer:false});if(this.gl)this.initGL();}catch{
         // A failed GPU initialization must not abort the app's communication UI.
@@ -101,6 +196,7 @@
         const replacement=canvas.cloneNode(false);canvas.replaceWith(replacement);this.canvas=canvas=replacement;this.gl=null;
       }
       if(!this.gl){this.ctx=canvas.getContext('2d',{alpha:false});this.dprLimit=1.25;this.fps=15;this.softwareMesh=buildCompatibilityRoom();}
+      canvas.dataset.localBody=this.gl?'solid-3d-gloves':'css-fallback';
       const stage=canvas.parentElement;
       this.labels=document.createElement('div');this.labels.className='spatial-labels';this.labels.setAttribute('aria-hidden','true');stage.append(this.labels);this.labelNodes=new Map();
       for(const spec of SPECS){const el=document.createElement('span');el.className='spatial-label';el.textContent=spec.name;el.style.setProperty('--agent',spec.color);this.labels.append(el);this.labelNodes.set(spec.id,el);}
@@ -113,24 +209,34 @@
     }
     initGL(){
       const g=this.gl,shader=(kind,source)=>{const s=g.createShader(kind);g.shaderSource(s,source);g.compileShader(s);if(!g.getShaderParameter(s,g.COMPILE_STATUS))throw Error('Spatial shader compile failed');return s;};
-      const v=shader(g.VERTEX_SHADER,'attribute vec3 p;attribute vec4 c;attribute vec2 uv;uniform mat4 vp;varying vec4 col;varying vec2 tex;void main(){gl_Position=vp*vec4(p,1.);col=c;tex=uv;}');
-      const f=shader(g.FRAGMENT_SHADER,'precision mediump float;varying vec4 col;varying vec2 tex;uniform sampler2D sprite;uniform bool textured;void main(){vec4 c=col;if(textured)c*=texture2D(sprite,tex);if(c.a<.02)discard;gl_FragColor=c;}');
+      // Retained normals are lit per vertex. Smooth agent meshes interpolate
+      // highlights, while the fullscreen fragment path stays inexpensive on a
+      // phone: no per-pixel normalisation, powers, distance or material branch.
+      const v=shader(g.VERTEX_SHADER,'attribute vec3 p;attribute vec4 c;attribute vec2 uv;attribute vec3 normal;uniform mat4 vp;uniform mat4 model;uniform vec3 eye;uniform bool polished;varying vec4 col;varying vec2 tex;varying float fog;void main(){vec4 world=model*vec4(p,1.);gl_Position=vp*world;col=c;tex=uv;vec3 n=mat3(model)*normal;float len=length(n);if(len>.1){n/=len;vec3 view=normalize(eye-world.xyz);if(dot(n,view)<0.)n=-n;vec3 key=normalize(vec3(-.35,.88,.32));vec3 fill=normalize(vec3(.78,.36,-.55));float diffuse=.40+.50*max(dot(n,key),0.)+.16*max(dot(n,fill),0.);col.rgb*=diffuse;if(polished){float spec=pow(max(dot(n,normalize(key+view)),0.),38.)*.24;float rim=pow(1.-max(dot(n,view),0.),3.)*.12;col.rgb+=vec3(.72,.86,.94)*(spec+rim);}}fog=clamp((distance(eye,world.xyz)-5.)/28.,0.,.42);}');
+      const f=shader(g.FRAGMENT_SHADER,'precision mediump float;varying vec4 col;varying vec2 tex;varying float fog;uniform sampler2D sprite;uniform bool textured;uniform float visibility;void main(){vec4 c=col;if(textured)c*=texture2D(sprite,tex);gl_FragColor=vec4(mix(c.rgb*visibility,vec3(.075,.12,.16),fog),c.a);}');
       this.program=g.createProgram();g.attachShader(this.program,v);g.attachShader(this.program,f);g.linkProgram(this.program);if(!g.getProgramParameter(this.program,g.LINK_STATUS))throw Error('Spatial program link failed');g.deleteShader(v);g.deleteShader(f);g.useProgram(this.program);
       const backgroundVertex=shader(g.VERTEX_SHADER,'attribute vec2 p;varying vec2 pos;void main(){pos=p;gl_Position=vec4(p,0.,1.);}');
       const backgroundFragment=shader(g.FRAGMENT_SHADER,'precision mediump float;varying vec2 pos;void main(){vec2 q=pos*vec2(.8,.65);float glow=exp(-dot(q,q)*2.4);vec3 c=mix(vec3(.005,.012,.020),vec3(.035,.075,.096),glow);c*=1.-.25*max(0.,-pos.y);gl_FragColor=vec4(c,1.);}');
       this.backgroundProgram=g.createProgram();g.attachShader(this.backgroundProgram,backgroundVertex);g.attachShader(this.backgroundProgram,backgroundFragment);g.linkProgram(this.backgroundProgram);if(!g.getProgramParameter(this.backgroundProgram,g.LINK_STATUS))throw Error('Spatial background link failed');g.deleteShader(backgroundVertex);g.deleteShader(backgroundFragment);
       this.backgroundLocation=g.getAttribLocation(this.backgroundProgram,'p');this.backgroundBuffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,this.backgroundBuffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),g.STATIC_DRAW);
-      this.locations={p:g.getAttribLocation(this.program,'p'),c:g.getAttribLocation(this.program,'c'),uv:g.getAttribLocation(this.program,'uv'),vp:g.getUniformLocation(this.program,'vp'),textured:g.getUniformLocation(this.program,'textured')};
-      this.staticBuffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,this.staticBuffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(this.mesh.data),g.STATIC_DRAW);
-      this.dynamicBuffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,this.dynamicBuffer);g.bufferData(g.ARRAY_BUFFER,9*4*512,g.DYNAMIC_DRAW);
+      this.locations={p:g.getAttribLocation(this.program,'p'),c:g.getAttribLocation(this.program,'c'),uv:g.getAttribLocation(this.program,'uv'),normal:g.getAttribLocation(this.program,'normal'),vp:g.getUniformLocation(this.program,'vp'),model:g.getUniformLocation(this.program,'model'),eye:g.getUniformLocation(this.program,'eye'),visibility:g.getUniformLocation(this.program,'visibility'),polished:g.getUniformLocation(this.program,'polished'),textured:g.getUniformLocation(this.program,'textured')};
+      // Partition only once per GL/context initialization. Transparent floor
+      // shadows/identity arcs retain blending; all solid room/body passes do not.
+      const opaque=[],alpha=[];for(let offset=0;offset<this.mesh.data.length;offset+=36){const target=this.mesh.data[offset+6]<.999?alpha:opaque;for(let n=0;n<36;n++)target.push(this.mesh.data[offset+n]);}
+      this.opaqueVertices=opaque.length/12;this.alphaVertices=alpha.length/12;
+      this.staticBuffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,this.staticBuffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(opaque),g.STATIC_DRAW);
+      this.alphaBuffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,this.alphaBuffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(alpha),g.STATIC_DRAW);
+      this.actorBuffers.clear();for(const [id,mesh] of this.actorMeshes){const buffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,buffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(mesh.data),g.STATIC_DRAW);this.actorBuffers.set(id,buffer);}
+      this.handBuffers=this.handMeshes.map(mesh=>{const buffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,buffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(mesh.data),g.STATIC_DRAW);return buffer;});
+      this.selectionBuffers.clear();for(const [id,mesh] of this.selectionMeshes){const buffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,buffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(mesh.data),g.STATIC_DRAW);this.selectionBuffers.set(id,buffer);}
       g.enable(g.DEPTH_TEST);g.enable(g.BLEND);g.blendFunc(g.SRC_ALPHA,g.ONE_MINUS_SRC_ALPHA);g.clearColor(.018,.018,.028,1);
     }
-    bindBuffer(buffer){const g=this.gl;g.bindBuffer(g.ARRAY_BUFFER,buffer);for(const [name,size,offset] of [['p',3,0],['c',4,12],['uv',2,28]]){g.enableVertexAttribArray(this.locations[name]);g.vertexAttribPointer(this.locations[name],size,g.FLOAT,false,36,offset);}}
+    bindBuffer(buffer){const g=this.gl;g.bindBuffer(g.ARRAY_BUFFER,buffer);for(const [name,size,offset] of [['p',3,0],['c',4,12],['uv',2,28],['normal',3,36]]){g.enableVertexAttribArray(this.locations[name]);g.vertexAttribPointer(this.locations[name],size,g.FLOAT,false,48,offset);}}
     bindInput(){
       const c=this.canvas;c.style.touchAction='none';
       c.addEventListener('pointerdown',e=>{if(!this.active||e.button>0)return;c.setPointerCapture?.(e.pointerId);this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,multi:this.pointers.size>0});if(this.pointers.size>1)for(const p of this.pointers.values())p.multi=true;});
       c.addEventListener('pointermove',e=>{const p=this.pointers.get(e.pointerId);if(!p)return;const dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;if(this.pointers.size===1)this.look(dx,dy);});
-      c.addEventListener('pointerup',e=>{const p=this.pointers.get(e.pointerId);this.pointers.delete(e.pointerId);if(!p||p.multi||Math.hypot(e.clientX-p.sx,e.clientY-p.sy)>8)return;const r=c.getBoundingClientRect(),hit=this.pick(e.clientX-r.left,e.clientY-r.top);if(hit)this.select?.(hit.id);});
+      c.addEventListener('pointerup',e=>{const p=this.pointers.get(e.pointerId);this.pointers.delete(e.pointerId);if(!p||p.multi||Math.hypot(e.clientX-p.sx,e.clientY-p.sy)>8)return;const r=c.getBoundingClientRect(),hit=this.pick(e.clientX-r.left,e.clientY-r.top);if(hit){this.focusAgent(hit.id);this.select?.(hit.id);}});
       const cancel=e=>this.pointers.delete(e.pointerId);c.addEventListener('pointercancel',cancel);c.addEventListener('lostpointercapture',cancel);
       // Keyboard navigation belongs only to the visible world, never a draft or
       // dialog. Held keys and touch movement share the same collision path.
@@ -143,7 +249,8 @@
     setMovement(strafe,forward){const x=Number.isFinite(strafe)?clamp(strafe,-1,1):0,z=Number.isFinite(forward)?clamp(forward,-1,1):0,n=Math.max(1,Math.hypot(x,z));this.movement={x:x/n,z:z/n};if(x||z)this.requestDraw();}
     stopMovement(){this.keys.clear();this.movement={x:0,z:0};this.requestDraw();}
     movementVector(){if(document.hidden||document.querySelector?.('dialog[open]'))return {x:0,z:0};const x=this.movement.x+(this.keys.has('d')||this.keys.has('arrowright')?1:0)-(this.keys.has('a')||this.keys.has('arrowleft')?1:0),z=this.movement.z+(this.keys.has('w')||this.keys.has('arrowup')?1:0)-(this.keys.has('s')||this.keys.has('arrowdown')?1:0),n=Math.max(1,Math.hypot(x,z));return {x:x/n,z:z/n};}
-    look(dx,dy){if(!Number.isFinite(dx)||!Number.isFinite(dy))return;this.yaw=(this.yaw+dx*.0035+Math.PI*3)%(Math.PI*2)-Math.PI;this.pitch=clamp(this.pitch-dy*.003,-1.15,1.15);this.focused=null;this.requestDraw();}
+    setLookSensitivity(value){if(Number.isFinite(value))this.lookSensitivity=clamp(value,.4,2);return this.lookSensitivity;}
+    look(dx,dy){if(!Number.isFinite(dx)||!Number.isFinite(dy))return;this.yaw=(this.yaw+dx*.0035*this.lookSensitivity+Math.PI*3)%(Math.PI*2)-Math.PI;this.pitch=clamp(this.pitch-dy*.003*this.lookSensitivity,-1.15,1.15);this.focused=null;this.requestDraw();}
     canStand(x,z){if(!Number.isFinite(x)||!Number.isFinite(z)||Math.abs(x)>ROOM.halfWidth-PLAYER_RADIUS-.08||Math.abs(z)>ROOM.halfDepth-PLAYER_RADIUS-.08)return false;for(const station of STATIONS){const nx=clamp(x,station.x-1.3,station.x+1.3),nz=clamp(z,station.z-1.3,station.z+1.3);if(Math.hypot(x-nx,z-nz)<PLAYER_RADIUS)return false;}return true;}
     movePlayer(dt){const move=this.movementVector();if(!move.x&&!move.z)return;const distance=WALK_SPEED*Math.min(.08,Math.max(0,dt)),dx=(Math.cos(this.yaw)*move.x+Math.sin(this.yaw)*move.z)*distance,dz=(Math.sin(this.yaw)*move.x-Math.cos(this.yaw)*move.z)*distance;
       // Small bounded steps and independent axes provide wall sliding, without
@@ -158,7 +265,14 @@
     frameCamera(aspect){const eye=[this.player.x,EYE_HEIGHT,this.player.z],cp=Math.cos(this.pitch),forward=[Math.sin(this.yaw)*cp,Math.sin(this.pitch),-Math.cos(this.yaw)*cp],camera=cameraMatrix(eye,eye.map((v,i)=>v+forward[i]),aspect,this.fov/this.zoom);this.eye=eye;this.forward=forward;this.cameraRight=camera.right;this.cameraUp=camera.up;return {...camera,right:[Math.cos(this.yaw),0,Math.sin(this.yaw)],up:[0,1,0]};}
     pick(x=this.width/2,y=this.height/2){if(!this.vp||!this.eye)return null;const t=Math.tan(this.fov/this.zoom/2),nx=(x/this.width*2-1)*this.width/this.height*t,ny=(1-y/this.height*2)*t,ray=norm(this.forward.map((v,i)=>v+this.cameraRight[i]*nx+this.cameraUp[i]*ny)),normal=[Math.sin(this.yaw),0,-Math.cos(this.yaw)],den=dot(ray,normal);if(Math.abs(den)<.0001)return null;let best=null;
       for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),distance=dot(sub([p.x,p.y,p.z],this.eye),normal)/den;if(distance<.1||distance>24)continue;const hit=this.eye.map((v,j)=>v+ray[j]*distance),side=dot(sub(hit,[p.x,p.y,p.z]),this.right);if(Math.abs(side)>ACTOR_WIDTH*.43||hit[1]<p.y+.06||hit[1]>p.y+ACTOR_HEIGHT*.94)continue;if(!best||distance<best.distance)best={id:s.id,agent:s.id,distance,near:Math.hypot(p.x-this.player.x,p.z-this.player.z)<=3.5};}return best;}
-    interactionTarget(){return this.target?{...this.target}:null;}
+    interactionTarget(){
+      // An explicit menu/body selection is not a gaze hit. A nearer creature
+      // must not steal its conversation before the next frame or occlude it
+      // from a different walking position. Deliberate look input clears focus.
+      const index=SPECS.findIndex(spec=>spec.id===this.focused);
+      if(index>=0){const p=this.actorPosition(null,index),distance=Math.hypot(p.x-this.player.x,p.z-this.player.z);return {id:this.focused,agent:this.focused,explicit:true,distance,near:distance<=3.5};}
+      return this.target?{...this.target}:null;
+    }
     getDebugState(){return this.diagnostics();}
     fitViewport(){
       const stage=this.canvas.parentElement;if(stage.closest('[hidden]'))return;
@@ -166,11 +280,23 @@
       // rather than reinstating the old fixed percentage and wasting phone space.
       const nav=document.querySelector('.bottom-nav')?.getBoundingClientRect().height||76;document.documentElement.style.setProperty('--spatial-nav-height',nav+'px');this.resize();
     }
-    resize(){const r=this.canvas.getBoundingClientRect();if(!r.width||!r.height)return;const dpr=Math.min(this.dprLimit,devicePixelRatio||1),w=Math.round(r.width*dpr),h=Math.round(r.height*dpr);if(w===this.canvas.width&&h===this.canvas.height&&this.width===r.width&&this.height===r.height&&this.dpr===dpr)return;this.width=r.width;this.height=r.height;this.dpr=dpr;this.performance.resizes++;if(this.canvas.width!==w)this.canvas.width=w;if(this.canvas.height!==h)this.canvas.height=h;this.requestDraw();}
+    resize(){const r=this.canvas.getBoundingClientRect();if(!r.width||!r.height)return;if(!this.active&&this.performance.draws>0){this.resizePending=true;return;}this.resizePending=false;const dpr=Math.min(this.dprLimit,devicePixelRatio||1),w=Math.round(r.width*dpr),h=Math.round(r.height*dpr);if(w===this.canvas.width&&h===this.canvas.height&&this.width===r.width&&this.height===r.height&&this.dpr===dpr)return;this.width=r.width;this.height=r.height;this.dpr=dpr;this.performance.resizes++;if(this.canvas.width!==w)this.canvas.width=w;if(this.canvas.height!==h)this.canvas.height=h;this.requestDraw();}
     quality(light){const limit=!this.gl||light?1.25:2,rate=!this.gl?15:light?30:60;if(limit===this.dprLimit&&rate===this.fps)return;this.dprLimit=limit;this.fps=rate;this.resize();}
-    update(rows,live,selected,motion){this.rows=rows;this.live=live===true;this.selected=selected;this.motion=motion===true;
-      for(const [i,s] of SPECS.entries()){const row=rows.get(s.id),status=this.live&&['active','idle','queued'].includes(row?.status)?row.status:'unknown';let a=this.actors.get(s.id);if(!a){a={clock:0,status,observed:status!=='unknown',sessionId:row?.sessionId};this.actors.set(s.id,a);}if(a.sessionId!==row?.sessionId){a.clock=0;a.sessionId=row?.sessionId;}if(status==='unknown'&&a.observed)a.frozen=this.actorPosition(null,i,a);if(status!=='unknown')a.frozen=null;a.status=status;a.observed=status!=='unknown';}
-      this.requestDraw();this.schedule();}
+    update(rows,live,selected,motion){
+      const connected=live===true,animate=motion===true,statusFor=row=>connected&&['active','idle','queued'].includes(row?.status)?row.status:'unknown';
+      // Snapshot cadence is not visual motion. Public text, receipts and fresh
+      // polling timestamps do not invalidate a retained room or an idle agent.
+      const signature=JSON.stringify([connected,selected,animate,SPECS.map(spec=>{const row=rows.get(spec.id);return [spec.id,row?.sessionId||null,statusFor(row)];})]);
+      const changed=signature!==this.visualSignature;this.visualSignature=signature;this.rows=rows;this.live=connected;this.selected=selected;this.motion=animate;
+      if(changed){for(const [i,spec] of SPECS.entries()){
+        const row=rows.get(spec.id),status=statusFor(row);let actor=this.actors.get(spec.id);
+        if(!actor){actor={clock:0,status,observed:status!=='unknown',sessionId:row?.sessionId};this.actors.set(spec.id,actor);}
+        if(actor.sessionId!==row?.sessionId){actor.clock=0;actor.frozen=null;actor.observed=false;actor.sessionId=row?.sessionId;}
+        if(status==='unknown'&&actor.observed)actor.frozen=this.actorPosition(null,i,actor);
+        if(status!=='unknown')actor.frozen=null;actor.status=status;actor.observed=status!=='unknown';
+      }this.requestDraw();}
+      this.schedule();
+    }
     show(active){this.active=active===true;this.labels.hidden=!this.active;if(this.active){this.fitViewport();this.requestDraw();this.schedule();}else{this.stopFrame();this.pointers.clear();this.keys.clear();this.movement={x:0,z:0};}}
     stopFrame(){cancelAnimationFrame(this.frame);this.frame=0;this.previous=0;}
     requestDraw(invalidate=true){if(invalidate)this.dirty=true;if(!this.active||this.destroyed||this.lost||document.hidden||this.frame)return;this.frame=requestAnimationFrame(t=>{this.frame=0;this.tick(t);});}
@@ -188,17 +314,23 @@
     draw(){if(!this.active||this.destroyed||this.lost||this.width<2)return;const started=performance.now(),camera=this.frameCamera(this.width/this.height);this.vp=camera.matrix;this.right=camera.right;this.up=camera.up;
       if(this.gl)this.drawGL();else this.drawSoftware();this.updateLabels();this.onFrame?.();this.performance.draws++;this.performance.drawMs.push(performance.now()-started);if(this.performance.drawMs.length>120)this.performance.drawMs.shift();}
     texture(spec){const g=this.gl;if(this.textures.has(spec.id))return this.textures.get(spec.id);const t=g.createTexture();g.bindTexture(g.TEXTURE_2D,t);g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL,true);g.texImage2D(g.TEXTURE_2D,0,g.RGBA,g.RGBA,g.UNSIGNED_BYTE,this.actorSprite(spec));g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MIN_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MAG_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_S,g.CLAMP_TO_EDGE);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_T,g.CLAMP_TO_EDGE);this.textures.set(spec.id,t);return t;}
-    drawGL(){const g=this.gl;g.viewport(0,0,this.canvas.width,this.canvas.height);g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);g.disable(g.DEPTH_TEST);g.disable(g.BLEND);g.useProgram(this.backgroundProgram);g.bindBuffer(g.ARRAY_BUFFER,this.backgroundBuffer);g.enableVertexAttribArray(this.backgroundLocation);g.vertexAttribPointer(this.backgroundLocation,2,g.FLOAT,false,8,0);g.drawArrays(g.TRIANGLES,0,3);g.enable(g.DEPTH_TEST);g.enable(g.BLEND);g.useProgram(this.program);g.uniformMatrix4fv(this.locations.vp,false,this.vp);g.uniform1i(this.locations.textured,0);this.bindBuffer(this.staticBuffer);g.drawArrays(g.TRIANGLES,0,this.mesh.data.length/9);
-      const ring=new Mesh(),i=SPECS.findIndex(s=>s.id===this.selected);if(i>=0){const p=this.actorPosition(null,i);ring.ring(p.x,.947,p.z,.8,SPECS[i].color,.035,.95);}
-      this.bindBuffer(this.dynamicBuffer);g.bufferSubData(g.ARRAY_BUFFER,0,new Float32Array(ring.data));g.drawArrays(g.TRIANGLES,0,ring.data.length/9);
-      // Transparent billboards depth-tested against actual consoles and floor.
-      const actors=SPECS.map((s,i)=>({s,i,p:this.actorPosition(null,i)})).sort((a,b)=>this.project([b.p.x,.5,b.p.z]).depth-this.project([a.p.x,.5,a.p.z]).depth);
-      g.depthMask(false);g.uniform1i(this.locations.textured,1);
-      for(const {s,p} of actors){const a=this.actors.get(s.id),r=this.right.map(v=>v*ACTOR_WIDTH/2),rgba=[1,1,1,a?.observed?1:.48],bottom=[p.x,p.y,p.z],top=[p.x+this.up[0]*ACTOR_HEIGHT,p.y+this.up[1]*ACTOR_HEIGHT,p.z+this.up[2]*ACTOR_HEIGHT],vertices=[];
-        const v=(p,sign,u,v)=>vertices.push(p[0]+r[0]*sign,p[1]+r[1]*sign,p[2]+r[2]*sign,...rgba,u,v);
-        v(bottom,-1,0,0);v(bottom,1,1,0);v(top,1,1,1);v(bottom,-1,0,0);v(top,1,1,1);v(top,-1,0,1);
-        g.bindTexture(g.TEXTURE_2D,this.texture(s));g.bufferSubData(g.ARRAY_BUFFER,0,new Float32Array(vertices));g.drawArrays(g.TRIANGLES,0,6);}
-      g.depthMask(true);}
+    drawGL(){const g=this.gl,identity=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);g.viewport(0,0,this.canvas.width,this.canvas.height);g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);g.disable(g.DEPTH_TEST);g.disable(g.BLEND);g.useProgram(this.backgroundProgram);g.bindBuffer(g.ARRAY_BUFFER,this.backgroundBuffer);g.enableVertexAttribArray(this.backgroundLocation);g.vertexAttribPointer(this.backgroundLocation,2,g.FLOAT,false,8,0);g.drawArrays(g.TRIANGLES,0,3);g.enable(g.DEPTH_TEST);g.disable(g.BLEND);g.depthMask(true);g.useProgram(this.program);g.uniformMatrix4fv(this.locations.vp,false,this.vp);g.uniformMatrix4fv(this.locations.model,false,identity);g.uniform3fv(this.locations.eye,this.eye);g.uniform1f(this.locations.visibility,1);g.uniform1i(this.locations.textured,0);g.uniform1i(this.locations.polished,0);this.bindBuffer(this.staticBuffer);g.drawArrays(g.TRIANGLES,0,this.opaqueVertices);g.enable(g.BLEND);g.depthMask(false);this.bindBuffer(this.alphaBuffer);g.drawArrays(g.TRIANGLES,0,this.alphaVertices);
+      const selectedIndex=SPECS.findIndex(s=>s.id===this.selected);if(selectedIndex>=0){const p=this.actorPosition(null,selectedIndex),model=identity.slice();model[12]=p.x;model[13]=.94;model[14]=p.z;g.uniformMatrix4fv(this.locations.model,false,model);this.bindBuffer(this.selectionBuffers.get(this.selected));g.drawArrays(g.TRIANGLES,0,this.selectionMeshes.get(this.selected).data.length/12);}
+      g.depthMask(true);g.disable(g.BLEND);g.uniform1i(this.locations.polished,1);
+      // Opaque retained 3D bodies write depth normally. A side step changes the
+      // silhouette and occlusion; no camera-facing art is used on the GPU path.
+      for(const [i,spec] of SPECS.entries()){
+        const p=this.actorPosition(null,i),yaw=STATIONS[i].x<0?Math.PI/2:-Math.PI/2,c=Math.cos(yaw),s=Math.sin(yaw),model=new Float32Array([c,0,-s,0,0,1,0,0,s,0,c,0,p.x,p.y,p.z,1]);
+        g.uniformMatrix4fv(this.locations.model,false,model);g.uniform1f(this.locations.visibility,this.actors.get(spec.id)?.observed?1:.72);this.bindBuffer(this.actorBuffers.get(spec.id));g.drawArrays(g.TRIANGLES,0,this.actorMeshes.get(spec.id).data.length/12);
+      }
+      // Camera-attached local embodiment. Clearing depth here prevents a wall
+      // from slicing the near-field glove; no navigation/collision geometry is
+      // bypassed because these hands are only a view model.
+      g.clear(g.DEPTH_BUFFER_BIT);g.uniform1f(this.locations.visibility,1);
+      const spread=clamp(this.width/this.height*.24,.16,.48),right=this.cameraRight,up=this.cameraUp,forward=this.forward;
+      for(let i=0;i<2;i++){const side=i?1:-1,position=this.eye.map((v,j)=>v+right[j]*spread*side),model=new Float32Array([right[0],right[1],right[2],0,up[0],up[1],up[2],0,-forward[0],-forward[1],-forward[2],0,...position,1]);g.uniformMatrix4fv(this.locations.model,false,model);this.bindBuffer(this.handBuffers[i]);g.drawArrays(g.TRIANGLES,0,this.handMeshes[i].data.length/12);}
+      g.uniformMatrix4fv(this.locations.model,false,identity);g.uniform1f(this.locations.visibility,1);
+    }
     drawSoftware(){const c=this.ctx;if(!c)return;
       // A small retained depth buffer replaces face-average painter sorting:
       // first-person floors and nearby walls cross the near plane and cannot
@@ -218,8 +350,8 @@
     updateLabels(){this.hits=[];for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),centre=this.project([p.x,p.y+ACTOR_HEIGHT*.5,p.z]),label=this.project([p.x,p.y+ACTOR_HEIGHT+.14,p.z]),el=this.labelNodes.get(s.id),distance=Math.hypot(p.x-this.player.x,p.z-this.player.z);const visible=label.depth>.15&&label.x>20&&label.x<this.width-20&&label.y>12&&label.y<this.height-12&&distance<19;el.hidden=!visible;el.classList.toggle('selected',s.id===this.selected);el.dataset.status=this.actors.get(s.id)?.status||'unknown';const transform=`translate(${label.x.toFixed(1)}px,${label.y.toFixed(1)}px)`;if(el.style.transform!==transform)el.style.transform=transform;if(centre.depth>.15)this.hits.push({id:s.id,x:centre.x,y:centre.y,w:Math.max(30,ACTOR_WIDTH*centre.s*this.height),h:Math.max(35,ACTOR_HEIGHT*centre.s*this.height),depth:centre.depth});}
       this.target=this.pick();const target=this.target?{...this.target,distance:Math.round(this.target.distance*10)/10}:null,signature=JSON.stringify(target);if(signature!==this.targetSignature){this.targetSignature=signature;this.onTarget?.(target||{agent:null,id:null,near:false,distance:null});}}
     projectedBounds(){const points=this.framingPoints().map(p=>this.project(p)).filter(p=>p.depth>.1);if(!points.length)return null;return {left:Math.min(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),right:Math.max(...points.map(p=>p.x)),bottom:Math.max(...points.map(p=>p.y)),labels:[...this.labelNodes.values()].filter(el=>!el.hidden).length};}
-    diagnostics(){const p=(a)=>a.length?Math.round(a.slice().sort((a,b)=>a-b)[Math.floor((a.length-1)*.95)]*100)/100:null,nearby=STATIONS.map(station=>({agent:station.spec.id,distance:Math.round(Math.hypot(station.x-this.player.x,station.z-this.player.z)*10)/10})).sort((a,b)=>a.distance-b.distance).filter(agent=>agent.distance<=3.5);return {renderer:this.gl?'webgl-first-person':'canvas-first-person-fallback',mode:'first-person',active:this.active,live:this.live,motion:this.motion,contextLost:this.lost,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,focused:this.focused,projectedBounds:this.vp?this.projectedBounds():null,player:{x:this.player.x,z:this.player.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS,yaw:this.yaw,pitch:this.pitch,speed:WALK_SPEED,collision:this.canStand(this.player.x,this.player.z)?'clear':'blocked',movement:this.movementVector()},camera:{yaw:this.yaw,pitch:this.pitch,x:this.player.x,y:EYE_HEIGHT,z:this.player.z},room:{width:ROOM.halfWidth*2,depth:ROOM.halfDepth*2,height:ROOM.height},target:this.interactionTarget(),nearby,draws:this.performance.draws,pendingPaint:this.dirty,pendingFrame:!!this.frame,resizes:this.performance.resizes,meshBuilds:this.performance.meshBuilds,triangles:this.mesh.data.length/27,softwareTriangles:this.softwareMesh?this.softwareMesh.data.length/27:null,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,sampleLimit:120,drawCpuP95Ms:p(this.performance.drawMs),rafIntervalP95Ms:p(this.performance.frameMs),scope:'Local navigation and recent WebView CPU/RAF intervals; not agent travel, productive work, GPU presentation or native-chat frame timing'};}
-    destroy(){this.show(false);this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);window.removeEventListener('keydown',this.onKeyDown);window.removeEventListener('keyup',this.onKeyUp);window.removeEventListener('blur',this.onBlur);this.labels.remove();this.notice.remove();const g=this.gl;if(g){for(const t of this.textures.values())g.deleteTexture(t);g.deleteBuffer(this.staticBuffer);g.deleteBuffer(this.dynamicBuffer);g.deleteBuffer(this.backgroundBuffer);g.deleteProgram(this.program);g.deleteProgram(this.backgroundProgram);}}
+    diagnostics(){const p=(a)=>a.length?Math.round(a.slice().sort((a,b)=>a-b)[Math.floor((a.length-1)*.95)]*100)/100:null,nearby=STATIONS.map(station=>({agent:station.spec.id,distance:Math.round(Math.hypot(station.x-this.player.x,station.z-this.player.z)*10)/10})).sort((a,b)=>a.distance-b.distance).filter(agent=>agent.distance<=3.5);return {renderer:this.gl?'webgl-first-person':'canvas-first-person-fallback',mode:'first-person',active:this.active,live:this.live,motion:this.motion,contextLost:this.lost,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,lookSensitivity:this.lookSensitivity,focused:this.focused,projectedBounds:this.vp?this.projectedBounds():null,player:{x:this.player.x,z:this.player.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS,yaw:this.yaw,pitch:this.pitch,speed:WALK_SPEED,collision:this.canStand(this.player.x,this.player.z)?'clear':'blocked',movement:this.movementVector()},camera:{yaw:this.yaw,pitch:this.pitch,x:this.player.x,y:EYE_HEIGHT,z:this.player.z},room:{width:ROOM.halfWidth*2,depth:ROOM.halfDepth*2,height:ROOM.height},target:this.interactionTarget(),nearby,draws:this.performance.draws,pendingPaint:this.dirty,deferredResize:!!this.resizePending,pendingFrame:!!this.frame,resizes:this.performance.resizes,meshBuilds:this.performance.meshBuilds,triangles:this.mesh.data.length/36,actorGeometry:this.gl?'retained-solid-3d':'compatibility-billboards',localBody:this.gl?'solid-3d-gloves':'css-fallback',actorTriangles:[...this.actorMeshes.values()].reduce((n,m)=>n+m.data.length/36,0),localBodyTriangles:this.handMeshes.reduce((n,m)=>n+m.data.length/36,0),softwareTriangles:this.softwareMesh?this.softwareMesh.data.length/36:null,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,sampleLimit:120,drawCpuP95Ms:p(this.performance.drawMs),rafIntervalP95Ms:p(this.performance.frameMs),scope:'Local navigation and recent WebView CPU/RAF intervals; not agent travel, productive work, GPU presentation or native-chat frame timing'};}
+    destroy(){this.show(false);this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);window.removeEventListener('keydown',this.onKeyDown);window.removeEventListener('keyup',this.onKeyUp);window.removeEventListener('blur',this.onBlur);this.labels.remove();this.notice.remove();const g=this.gl;if(g){for(const t of this.textures.values())g.deleteTexture(t);for(const b of this.actorBuffers.values())g.deleteBuffer(b);for(const b of this.handBuffers)g.deleteBuffer(b);for(const b of this.selectionBuffers.values())g.deleteBuffer(b);g.deleteBuffer(this.staticBuffer);g.deleteBuffer(this.alphaBuffer);g.deleteBuffer(this.backgroundBuffer);g.deleteProgram(this.program);g.deleteProgram(this.backgroundProgram);}}
     actorSprite(spec){
       const key=[spec.id,spec.kind,spec.color,this.dprLimit].join(':');if(this.sprites.has(key))return this.sprites.get(key);
       // Code-native vector drawing cached at device quality; no downloaded artwork or

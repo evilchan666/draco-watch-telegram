@@ -146,7 +146,7 @@
   }
   class ClientState {
     constructor(storage) {
-      this.storage = storage; this.data = {drafts:{},attachments:[],outbox:[],pins:[],pinHistory:[],preferences:{scale:100,motion:false,rendering:'auto',echoToTelegram:false,automaticSpeech:false,speechPreferenceVersion:2,playbackRate:1,environmentBubbles:true}};
+      this.storage = storage; this.data = {drafts:{},attachments:[],outbox:[],pins:[],pinHistory:[],preferences:{scale:100,motion:false,rendering:'auto',echoToTelegram:false,automaticSpeech:false,speechPreferenceVersion:2,playbackRate:1,environmentBubbles:true,worldLookSensitivity:1,worldHandedness:'right'}};
       try {
         const saved = JSON.parse(storage.getItem(KEY) || 'null');
         if (saved && typeof saved === 'object') {
@@ -161,6 +161,8 @@
           // once; only a new deliberate opt-in under this version enables autoplay.
           this.data.preferences.automaticSpeech = saved.preferences?.speechPreferenceVersion === 2 && saved.preferences?.automaticSpeech === true;
           this.data.preferences.environmentBubbles = saved.preferences?.environmentBubbles !== false;
+          this.data.preferences.worldLookSensitivity = Number.isFinite(saved.preferences?.worldLookSensitivity)?Math.min(2,Math.max(.4,saved.preferences.worldLookSensitivity)):1;
+          this.data.preferences.worldHandedness = saved.preferences?.worldHandedness === 'left'?'left':'right';
           this.data.preferences.echoToTelegram = typeof saved.preferences?.echoToTelegram === 'boolean' ? saved.preferences.echoToTelegram : !!saved.preferences && typeof saved.preferences.scale === 'number';
           this.data.preferences.rendering = ['auto','light','full'].includes(saved.preferences?.rendering)?saved.preferences.rendering:'auto';
           this.data.pins = restorePins(saved.pins);
@@ -285,7 +287,7 @@
     pinHistory(agent,sessionId) {
       return pinTarget(agent,sessionId)?this.data.pinHistory.filter(row=>row.agent===agent&&row.sessionId===sessionId).slice().reverse().map(row=>({...row})):[];
     }
-    preferences(patch) { Object.assign(this.data.preferences,patch);if (![.5,.75,1,1.25,1.5,2].includes(this.data.preferences.playbackRate)) this.data.preferences.playbackRate=1;this.save();return this.data.preferences; }
+    preferences(patch) { Object.assign(this.data.preferences,patch);if (![.5,.75,1,1.25,1.5,2].includes(this.data.preferences.playbackRate)) this.data.preferences.playbackRate=1;this.data.preferences.worldLookSensitivity=Number.isFinite(this.data.preferences.worldLookSensitivity)?Math.min(2,Math.max(.4,this.data.preferences.worldLookSensitivity)):1;this.data.preferences.worldHandedness=this.data.preferences.worldHandedness==='left'?'left':'right';this.save();return this.data.preferences; }
   }
   window.DracoState = {ClientState,AGENTS,KEY,PIN_LIMITS,occupancyLabel,conversationTarget,runObservation,localRequestRows,mergeConversation,conversationDay};
 })();

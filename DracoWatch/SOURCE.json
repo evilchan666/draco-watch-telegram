@@ -1,19 +1,16 @@
 {
-  "watchSource": "e7ecffbad087328a58dfaf281c0d8408dc2c225e",
+  "watchSource": "899cc1294e3189c9fd747f4ba3e8bf7b659fd00f",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
-  "versionName": "0.5.0",
-  "versionCode": 26,
-  "integration": "First-person operating Environment and native Telegram-derived full-feature conversation over existing Watch transport",
+  "versionName": "0.6.0",
+  "versionCode": 27,
+  "integration": "native Telegram component subset and RecyclerView with retained first-person operating world",
   "loginMigration": false,
-  "updaterPublished": true,
+  "updaterPublished": false,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
-    "version": "0.4.1",
-    "versionCode": 25,
-    "sha256": "e1561b3fa29fdaf95083777526356e7a1a06260058fcda82031bdb032835d4f3"
+    "version": "0.5.0",
+    "versionCode": 26,
+    "sha256": "dce39fc5f2a621eec7460c9a3da1d5c4469d7471b44bbfda7d7c1ad708fb8534"
   },
-  "releaseState": "0.5.0/code26 authenticated private updater and full pinned download verified; physical phone connection/appearance/smoothness unverified",
-  "apkSha256": "dce39fc5f2a621eec7460c9a3da1d5c4469d7471b44bbfda7d7c1ad708fb8534",
-  "apkBytes": 1523590,
-  "packagedForkSource": "edaec9e912a4bb90f84a213bf6797a69562177d4"
+  "releaseState": "Integrated unpaired Android verification candidate; not published or device accepted"
 }

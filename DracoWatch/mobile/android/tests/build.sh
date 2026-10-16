@@ -25,6 +25,7 @@ mkdir -p "$output_root/classes" "$output_root/dex"
     "$native_root/tests/src/org/omega/dracowatch/AcceptedAudioChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/ViewportEvidenceChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/WorldChecks.java" \
+    "$native_root/tests/src/org/omega/dracowatch/ConnectionChecks.java" \
     "$native_root/tests/src/org/omega/dracowatch/CompetingAudioActivity.java" \
     "$native_root/tests/src/org/omega/dracowatch/CompetingAudioService.java"
 "$jdk_root/bin/jar" --create --file "$output_root/classes.jar" -C "$output_root/classes" .

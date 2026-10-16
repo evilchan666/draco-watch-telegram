@@ -60,6 +60,8 @@ public final class MonitorActivity extends Activity {
     private boolean worldRequested,worldImmersive,keyboardVisible;
     private int savedSystemUiVisibility,savedBarsBehavior,savedVisibleBars,savedCutoutMode;
     private boolean worldCutoutChanged;
+    private volatile JSONObject connectionObservation;
+    private AlertDialog connectionDialog; private TextView connectionStatus;
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);diagnostics=new NativeDiagnostics(this);diagnostics.record("lifecycle","created");previousCrashHandler=Thread.getDefaultUncaughtExceptionHandler();crashHandler=NativeDiagnostics.crashForwarder(diagnostics::crash,previousCrashHandler);Thread.setDefaultUncaughtExceptionHandler(crashHandler);playbackRate=validRate(getSharedPreferences("draco-audio",MODE_PRIVATE).getFloat("rate",1f));if(state!=null&&state.getBoolean("pickerOpen")){String recipient=state.getString("pickerAgent");if(DracoClient.AGENTS.contains(recipient)){pickerAgent=recipient;pickerOpen=true;}}prunePlayback();mediaStore=new AttachmentStore(this);profile=DracoClient.loadProfile(this);updater=new UpdateController(this,workers,this::deliver);
@@ -164,16 +166,17 @@ public final class MonitorActivity extends Activity {
         getSharedPreferences("phone",MODE_PRIVATE).edit().putString("agent",agent).apply();
         if(profile==null){connection("unpaired","Pair this phone with your DRACO client.");return;}if(!refreshing.compareAndSet(false,true))return;
         DracoClient.Profile selected=profile;long revision=pairingRevision;readLane("/v1/snapshot?agent="+agent).execute(()->{
-            long started=SystemClock.elapsedRealtime();int status=0;String correlationId=null;recordSnapshot("start",0,0,null,null);
+            long started=SystemClock.elapsedRealtime();int status=0;String correlationId=null;rememberConnection(recordSnapshot("start",0,0,null,null),revision,null);
             try{DracoClient.Response response=DracoClient.request(selected,"GET","/v1/snapshot?agent="+agent,null,null);
                 status=response.status;correlationId=response.correlationId;
                 if(response.status!=200)throw new DracoClient.Failure(response.status==401?"Phone pairing rejected.":"Live connection unavailable.",response.status,false,correlationId);
                 if(!response.data.has("agents")||!agent.equals(response.data.optString("selectedAgent")))throw new IOException();
-                recordSnapshot("success",SystemClock.elapsedRealtime()-started,status,correlationId,null);
+                rememberConnection(recordSnapshot("success",SystemClock.elapsedRealtime()-started,status,correlationId,null),revision,response.data);
                 if(active&&revision==pairingRevision&&agent.equals(latestAgent))deliver("onDracoSnapshot",response.data);
             }catch(Exception ex){DracoClient.Failure failure=ex instanceof DracoClient.Failure?(DracoClient.Failure)ex:null;
                 JSONObject metadata=recordSnapshot("failure",SystemClock.elapsedRealtime()-started,failure==null?status:failure.status,failure==null?correlationId:failure.correlationId,ex);
-                if(active&&revision==pairingRevision&&agent.equals(latestAgent))connection("offline",failure==null?"Live connection unavailable.":failure.getMessage(),metadata);}
+                rememberConnection(metadata,revision,null);
+                if(active&&revision==pairingRevision&&agent.equals(latestAgent))connection("offline",connectionFailureHint(metadata.optInt("status"),metadata.optString("errorName")),metadata);}
             finally{refreshing.set(false);if(active&&(!agent.equals(latestAgent)||revision!=pairingRevision))main.post(()->refresh(latestAgent));}});
     }
     private void requestJson(String id,String method,String path,String json,boolean bulk){
@@ -203,6 +206,42 @@ public final class MonitorActivity extends Activity {
         if(failure!=null)value.put("errorName",DracoClient.safeErrorName(failure));
         }catch(Exception ignored){}return value;}
     private JSONObject recordSnapshot(String phase,long durationMs,int status,String correlationId,Throwable failure){JSONObject value=snapshotMetadata(phase,durationMs,status,correlationId,failure);if(diagnostics!=null)try{diagnostics.record(value);}catch(Exception ignored){}return value;}
+    // The local connection panel distinguishes a phone transport reply from the
+    // gateway state inside it. This is observation metadata, never a live probe
+    // or permission to retry submitted messages.
+    private void rememberConnection(JSONObject metadata,long revision,JSONObject snapshot){
+        JSONObject value=new JSONObject();try{value=new JSONObject(metadata.toString());value.put("at",System.currentTimeMillis());value.put("pairingRevision",revision);
+            if(snapshot!=null){value.put("gatewayConnected",snapshot.optBoolean("connected",false));value.put("gatewayLastSuccess",snapshot.optLong("lastSuccess",0));}}
+        catch(Exception ignored){}connectionObservation=value;main.post(this::renderConnectionStatus);
+    }
+    static String connectionFailureHint(int status,String errorName){
+        if(status==401||status==403)return "Watch rejected this phone's authorization. Pairing has not been changed.";
+        if(status>0)return "Watch returned HTTP "+status+"; the snapshot could not be used.";
+        if("SSLHandshakeException".equals(errorName)||"SSLPeerUnverifiedException".equals(errorName))return "The secure connection could not be verified. TLS and pairing checks remain enabled.";
+        if("SocketTimeoutException".equals(errorName))return "The snapshot connection timed out. Your drafts are still saved; no message was resent.";
+        if("UnknownHostException".equals(errorName))return "The paired server name could not be resolved. Check this phone's network or VPN.";
+        if("ConnectException".equals(errorName)||"NoRouteToHostException".equals(errorName))return "The paired server could not be reached. Check this phone's network or VPN.";
+        return "The snapshot connection is unavailable. Open Connection & diagnostics for local failure details.";
+    }
+    static String connectionSummary(JSONObject observation,long now,boolean paired){
+        if(!paired)return "Phone pairing is missing or invalid. No connection check has been sent.\n\nExisting drafts remain on this phone.";
+        if(observation==null)return "No snapshot result in this app session yet.\n\nCheck connection reads the current snapshot only. It does not send a message, play audio or operate an agent.";
+        String phase=observation.optString("phase"),result;
+        if("start".equals(phase))result="Phone → Watch: snapshot check in progress.\nGateway feed: awaiting that reply.";
+        else if("success".equals(phase)){
+            long last=observation.optLong("gatewayLastSuccess",0);boolean fresh=observation.optBoolean("gatewayConnected")&&last>0&&last<=now+1000&&now-last<15000;
+            result="Phone → Watch: snapshot reply received (HTTP 200).\nGateway feed in that reply: "+(fresh?"fresh observation.":"unavailable or expired; agent state is unknown.");
+        }else result="Phone → Watch: snapshot check failed.\n"+connectionFailureHint(observation.optInt("status"),observation.optString("errorName"))+"\nGateway feed: not established by this check.";
+        long at=observation.optLong("at",0);if(at>0&&at<=now+1000)result+="\nObserved "+Math.max(0,(now-at)/1000)+" seconds ago.";
+        long duration=observation.optLong("durationMs",-1);if(duration>=0&&duration<=9007199254740991L)result+="\nAttempt duration: "+duration+" ms.";
+        String kind=observation.optString("errorName"),correlation=DracoClient.safeCorrelation(observation.optString("correlationId"));
+        if(kind.matches("[A-Za-z][A-Za-z0-9_]{0,63}"))result+="\nFailure type: "+kind;
+        if(correlation!=null)result+="\nRequest reference: "+correlation;
+        return result+"\n\nThis is a retained observation, not proof of current phone connectivity. Check connection reads only; uncertain messages are never replayed.";
+    }
+    private void renderConnectionStatus(){if(connectionStatus==null||connectionDialog==null||!connectionDialog.isShowing())return;JSONObject observation=connectionObservation;
+        if(observation!=null&&observation.optLong("pairingRevision",-1)!=pairingRevision)observation=null;
+        connectionStatus.setText(connectionSummary(observation,System.currentTimeMillis(),profile!=null));}
     private void connection(String state,String message){connection(state,message,null);}
     private void connection(String state,String message,JSONObject metadata){JSONObject value=new JSONObject();try{value.put("state",state);value.put("message",message);if(metadata!=null)for(String key:new String[]{"phase","status","durationMs","errorName","correlationId"})if(metadata.has(key))value.put(key,metadata.get(key));}catch(Exception ignored){}deliver("onDracoConnection",value);}
     void deliver(String callback,JSONObject value){String progressKey=null;if("onDracoTransfer".equals(callback))progressKey=callback+":"+value.optString("id")+":"+value.optString("state");else if("onDracoUpdate".equals(callback)&&"downloading".equals(value.optString("state")))progressKey=callback+":"+value.optInt("versionCode")+":downloading";
@@ -336,8 +375,15 @@ public final class MonitorActivity extends Activity {
     private void notifications(boolean enabled){if(enabled&&Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFICATIONS);return;}
         getSharedPreferences("phone",MODE_PRIVATE).edit().putBoolean("notifications",enabled).apply();WatchJobService.schedule(this,enabled);appInfo();}
     private void requestUninstall(){if(!active||destroyed)return;Uri ownPackage=Uri.parse("package:"+getPackageName());try{startActivity(new Intent(Intent.ACTION_DELETE,ownPackage));}catch(ActivityNotFoundException|SecurityException blocked){try{startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,ownPackage));Toast.makeText(this,"Use Android's Uninstall button to remove DRACO Watch.",Toast.LENGTH_LONG).show();}catch(ActivityNotFoundException|SecurityException unavailable){Toast.makeText(this,"Android could not open uninstall. Open Settings, Apps, DRACO Watch to remove it.",Toast.LENGTH_LONG).show();}}}
-    private void showSettings(){if(!active)return;String version=info().optString("versionName");new AlertDialog.Builder(this).setTitle("DRACO Watch "+version).setItems(new String[]{"Check for updates","Notifications: "+(info().optBoolean("notificationsEnabled")?"on":"off"),"Change private pairing","Android app settings","Uninstall DRACO Watch"},(dialog,index)->{
-        if(index==0)updater.check(true);else if(index==1)notifications(!info().optBoolean("notificationsEnabled"));else if(index==2)showPairing();else if(index==3)startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));else requestUninstall();}).setNegativeButton("Close",null).show();}
+    private void showSettings(){if(!active)return;String version=info().optString("versionName");new AlertDialog.Builder(this).setTitle("DRACO Watch "+version).setItems(new String[]{"Check for updates","Notifications: "+(info().optBoolean("notificationsEnabled")?"on":"off"),"Connection & diagnostics","Change private pairing","Android app settings","Uninstall DRACO Watch"},(dialog,index)->{
+        if(index==0)updater.check(true);else if(index==1)notifications(!info().optBoolean("notificationsEnabled"));else if(index==2)showConnectionStatus();else if(index==3)showPairing();else if(index==4)startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())));else requestUninstall();}).setNegativeButton("Close",null).show();}
+    private void showConnectionStatus(){if(!active||destroyed)return;if(connectionDialog!=null&&connectionDialog.isShowing()){renderConnectionStatus();return;}
+        TextView text=new TextView(this);text.setTextIsSelectable(true);text.setTextSize(16);int padding=Math.round(20*getResources().getDisplayMetrics().density);text.setPadding(padding,padding,padding,padding);
+        ScrollView scroll=new ScrollView(this);scroll.addView(text);connectionStatus=text;
+        AlertDialog panel=new AlertDialog.Builder(this).setTitle("Connection & diagnostics").setView(scroll).setNegativeButton("Close",null).setPositiveButton("Check connection",null).setNeutralButton("Export local log",null).create();connectionDialog=panel;
+        panel.setOnShowListener(ignored->{renderConnectionStatus();panel.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{refresh(latestAgent);renderConnectionStatus();});
+            panel.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(view->{if(!active||destroyed||diagnostics==null)return;JSONObject bundle=new JSONObject();try{JSONObject app=info();bundle.put("schema","draco.local-connection-support.v1");bundle.put("capturedAt",System.currentTimeMillis());bundle.put("versionName",app.optString("versionName"));bundle.put("versionCode",app.optInt("versionCode"));bundle.put("native",new JSONObject(diagnostics.export()));}catch(Exception ignoredExport){return;}shareSupportFile(bundle.toString(),true);});});
+        panel.setOnDismissListener(ignored->{if(connectionDialog==panel){connectionDialog=null;connectionStatus=null;}});panel.show();}
     private void showPairing(){EditText code=new EditText(this);code.setMinLines(3);code.setMaxLines(5);code.setHint("Paste private pairing code");code.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD|InputType.TYPE_TEXT_FLAG_MULTI_LINE);code.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS);code.setPadding(36,20,36,20);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Private client pairing").setMessage("This profile permits communication with your own agents. Keep the pairing code private.").setView(code).setNegativeButton("Cancel",null).setPositiveButton("Pair",null).create();
         dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{try{JSONObject raw=DracoClient.decodePairing(code.getText().toString());DracoClient.Profile next=new DracoClient.Profile(raw);getSharedPreferences("pairing",MODE_PRIVATE).edit().putString("profile",raw.toString()).commit();profile=next;pairingRevision++;code.setText("");dialog.dismiss();connection("connecting","Connecting to your private client.");refresh(latestAgent);}catch(Exception ex){code.setError("That private pairing code is invalid.");}}));dialog.show();}
@@ -345,7 +391,7 @@ public final class MonitorActivity extends Activity {
     void requestUnknownSources(){resumeInstall=false;startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())),UNKNOWN_SOURCES);}
     @Override protected void onResume(){super.onResume();active=true;updateWorldImmersive();if(web!=null){web.onResume();web.resumeTimers();lifecycle(true);drainCallbacks();}resumeMicrophoneStart();if(resumeInstall){resumeInstall=false;updater.install();}else if(loaded){refresh(latestAgent);updater.check(false);}}
     @Override protected void onPause(){active=false;updateWorldImmersive();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(diagnostics!=null)diagnostics.record("lifecycle","paused");finishRecording(false);stopPlayback();lifecycle(false);if(web!=null){web.onPause();web.pauseTimers();}super.onPause();}
-    @Override protected void onDestroy(){destroyed=true;active=false;worldRequested=false;updateWorldImmersive();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(Thread.getDefaultUncaughtExceptionHandler()==crashHandler)Thread.setDefaultUncaughtExceptionHandler(previousCrashHandler);microphonePermissionPending=false;pendingMicrophoneStart=false;updater.close();finishRecording(true);stopPlayback();workers.shutdownNow();interactiveWorkers.shutdownNow();readWorkers.shutdownNow();observationWorkers.shutdownNow();if(web!=null){web.removeJavascriptInterface("DracoNative");web.destroy();}super.onDestroy();}
+    @Override protected void onDestroy(){destroyed=true;active=false;worldRequested=false;updateWorldImmersive();if(connectionDialog!=null)connectionDialog.dismiss();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(Thread.getDefaultUncaughtExceptionHandler()==crashHandler)Thread.setDefaultUncaughtExceptionHandler(previousCrashHandler);microphonePermissionPending=false;pendingMicrophoneStart=false;updater.close();finishRecording(true);stopPlayback();workers.shutdownNow();interactiveWorkers.shutdownNow();readWorkers.shutdownNow();observationWorkers.shutdownNow();if(web!=null){web.removeJavascriptInterface("DracoNative");web.destroy();}super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration configuration){super.onConfigurationChanged(configuration);if(web!=null){web.getSettings().setTextZoom(systemTextZoom());appInfo();}}
     @Override public void onBackPressed(){if(recorder!=null){finishRecording(false);return;}if(telegram!=null&&telegram.showing()&&telegram.back())return;if(web!=null){web.evaluateJavascript("Boolean(window.DracoWatch&&typeof window.DracoWatch.back==='function'&&window.DracoWatch.back())",value->{if(!"true".equals(value))finish();});return;}super.onBackPressed();}
 }
