@@ -56,6 +56,7 @@ public final class MonitorActivity extends Activity {
     private boolean localWebInspection;
     private Runnable playbackTick;
     private String playbackState = "idle";
+    private String lastInsetState = "";
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);diagnostics=new NativeDiagnostics(this);diagnostics.record("lifecycle","created");previousCrashHandler=Thread.getDefaultUncaughtExceptionHandler();crashHandler=NativeDiagnostics.crashForwarder(diagnostics::crash,previousCrashHandler);Thread.setDefaultUncaughtExceptionHandler(crashHandler);playbackRate=validRate(getSharedPreferences("draco-audio",MODE_PRIVATE).getFloat("rate",1f));if(state!=null&&state.getBoolean("pickerOpen")){String recipient=state.getString("pickerAgent");if(DracoClient.AGENTS.contains(recipient)){pickerAgent=recipient;pickerOpen=true;}}prunePlayback();mediaStore=new AttachmentStore(this);profile=DracoClient.loadProfile(this);updater=new UpdateController(this,workers,this::deliver);
@@ -72,7 +73,7 @@ public final class MonitorActivity extends Activity {
             if(params.leftMargin!=left||params.topMargin!=top||params.rightMargin!=right||params.bottomMargin!=bottom){params.setMargins(left,top,right,bottom);web.setLayoutParams(params);}
             FrameLayout.LayoutParams nativeParams=(FrameLayout.LayoutParams)telegram.getLayoutParams();if(nativeParams.leftMargin!=left||nativeParams.topMargin!=top||nativeParams.rightMargin!=right||nativeParams.bottomMargin!=bottom){nativeParams.setMargins(left,top,right,bottom);telegram.setLayoutParams(nativeParams);}
             JSONObject value=new JSONObject();try{value.put("keyboardVisible",keyboard);value.put("bottom",bottom/getResources().getDisplayMetrics().density);}catch(Exception ignored){}
-            deliver("onDracoInsets",value);return insets;});
+            String insetState=value.toString();if(!insetState.equals(lastInsetState)){lastInsetState=insetState;deliver("onDracoInsets",value);}return insets;});
         setContentView(surface);surface.requestApplyInsets();
         WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setAllowFileAccessFromFileURLs(false);settings.setAllowUniversalAccessFromFileURLs(false);

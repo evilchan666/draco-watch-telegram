@@ -52,6 +52,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -138,6 +139,7 @@ public final class TelegramSurface extends FrameLayout {
     private String identity = "";
     private String viewName = "chats";
     private String rowsSignature = "";
+    private String rowContext = "";
     private String chromeSignature = "";
     private boolean chat;
     private boolean settingDraft;
@@ -496,6 +498,7 @@ public final class TelegramSurface extends FrameLayout {
             applyScale(shell);
             rowsSignature = "";
             chromeSignature = "";
+            adapter.clearRowViews();
         }
 
         boolean nextChat = value.optBoolean("chat");
@@ -507,6 +510,7 @@ public final class TelegramSurface extends FrameLayout {
             identity = nextIdentity;
             pinPosition = 0;
             expanded.clear();
+            adapter.clearRowViews();
             rowsSignature = "";
             chromeSignature = "";
             input.clearFocus();
@@ -575,15 +579,15 @@ public final class TelegramSurface extends FrameLayout {
             placePinBanner();
             int color = chat ? agentColor(payload.optString("agent")) : ACCENT;
             if (chat) {
-                title.setText(payload.optString("name", "Agent conversation"));
+                setText(title, payload.optString("name", "Agent conversation"));
                 title.setTextColor(color);
             } else if ("activity".equals(viewName)) {
-                title.setText("Live activity");
+                setText(title, "Live activity");
                 title.setTextColor(TEXT);
             } else {
                 SpannableString brand = new SpannableString("DRACO WATCH");
                 brand.setSpan(new ForegroundColorSpan(ACCENT), 6, brand.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-                title.setText(brand);
+                if (!(title.getText() instanceof Spanned) || !"DRACO WATCH".contentEquals(title.getText())) title.setText(brand);
                 title.setTextColor(TEXT);
             }
             reply.setTextColor(color);
@@ -594,7 +598,7 @@ public final class TelegramSurface extends FrameLayout {
             backButton.setVisibility(chat || !"chats".equals(viewName) ? VISIBLE : GONE);
             runStop.setVisibility(chat ? VISIBLE : GONE);
             boolean durableStop = capability("durableStop");
-            runStop.setText(durableStop ? "Stop & hold" : "Abort run");
+            setText(runStop, durableStop ? "Stop & hold" : "Abort run");
             runStop.setContentDescription(durableStop ? "Stop the exact run and hold automatic continuation until explicit release" : "Abort the exact run; automatic continuation may remain possible");
             runStop.setAlpha(capability("abort") ? 1 : .55f);
             backDrawable.setRotation(0, false);
@@ -609,12 +613,12 @@ public final class TelegramSurface extends FrameLayout {
             history.setVisibility(GONE);
             work.setContentDescription(payload.optString("workSummary") + ". " + payload.optString("historyNote") + ". Tap for complete work and coverage details.");
             activityFilter.setVisibility("activity".equals(viewName) ? VISIBLE : GONE);
-            activityFilter.setText(("all".equals(payload.optString("activityFilter", "all")) ? "All agents" : payload.optString("activityFilter")) + " · " + payload.optString("activityMode", "live") + "  ▾");
+            setText(activityFilter, ("all".equals(payload.optString("activityFilter", "all")) ? "All agents" : payload.optString("activityFilter")) + " · " + payload.optString("activityMode", "live") + "  ▾");
             updateAudio();
             String voiceState = payload.optString("voiceStatus");
             String fullVoiceState = voiceState.isEmpty() ? "Voice status unavailable · text remains readable" : voiceState;
             if (currentAudio() == null) setText(voice, fullVoiceState);
-            speed.setText(rateLabel(payload.optDouble("playbackRate", 1)));
+            setText(speed, rateLabel(payload.optDouble("playbackRate", 1)));
             setOptional(reply, payload.optString("replyLabel"));
             replyTop.setVisibility(payload.optString("replyLabel").isEmpty() ? GONE : VISIBLE);
             reply.setMaxLines(compactLayout ? 1 : 3);
@@ -633,7 +637,7 @@ public final class TelegramSurface extends FrameLayout {
             list.setPadding(dp(6), dp(8), dp(6), dp(shortLayout ? 8 : 12));
             compose.setVisibility(chat ? VISIBLE : GONE);
             String selectedModeLabel = "queue".equals(selectedSendMode) ? "Queue" : "steer".equals(selectedSendMode) ? "Steer" : compactLayout ? "Send" : "Follow-up";
-            modeSelector.setText(selectedModeLabel + " ▾");
+            setText(modeSelector, selectedModeLabel + " ▾");
             modeSelector.setTextColor(color);
             modeSelector.setContentDescription("Send mode: " + ("send".equals(selectedSendMode) ? "Send / follow-up (default)" : selectedModeLabel)
                 + ". Tap to choose without submitting. Queue uses the same current follow-up policy; unsupported Steer dispatches nothing.");
@@ -652,7 +656,7 @@ public final class TelegramSurface extends FrameLayout {
                 tab.setTextColor(selected ? ACCENT : SECONDARY);
                 tab.setBackground(selected ? outline(withAlpha(ACCENT, 0x25), 12, ACCENT) : null);
                 tab.setSelected(selected);
-                tab.setText(shortLayout ? "" : compactLayout ? COMPACT_VIEW_LABELS[i] : VIEW_LABELS[i]);
+                setText(tab, shortLayout ? "" : compactLayout ? COMPACT_VIEW_LABELS[i] : VIEW_LABELS[i]);
                 // An icon-only tab must not reserve an invisible scaled text
                 // line. Actual labels retain their full app/system SP scaling.
                 tab.setTextSize(shortLayout ? 0 : 11 * appScale);
@@ -660,7 +664,6 @@ public final class TelegramSurface extends FrameLayout {
                 tab.setCompoundDrawablesWithIntrinsicBounds(null, new Glyph(VIEWS[i], selected ? ACCENT : SECONDARY), null, null);
                 tab.setMinHeight(dp(shortLayout ? 44 : 52));
             }
-            jump.setText(compactLayout ? "↓" : "↓ Latest");
             pinLine.setColor(color);
             pinTitle.setTextColor(color);
             renderPin();
@@ -706,8 +709,23 @@ public final class TelegramSurface extends FrameLayout {
     private void updateRows(boolean changedConversation) {
         JSONArray content = payload.optJSONArray(chat ? "messages" : "activity".equals(viewName) ? "activity" : "roster");
         JSONArray sessionWork = chat ? payload.optJSONArray("work") : null;
-        String signature = viewName + ":" + chat + ":" + appScale + ":" + nativeFontScale + ":"
-            + TimeZone.getDefault().getID() + ":" + Locale.getDefault() + ":" + String.valueOf(content) + String.valueOf(sessionWork);
+        JSONArray palette = new JSONArray();
+        JSONArray roster = payload.optJSONArray("roster");
+        if (roster != null) for (int i = 0; i < roster.length(); i++) {
+            JSONObject agent = roster.optJSONObject(i);
+            if (agent != null) palette.put(new JSONArray().put(agent.optString("id")).put(agent.optString("color")));
+        }
+        // A row view owns listeners as well as text. Bind reuse to the exact
+        // physical conversation/run and formatting context, not a display ID
+        // or a hash alone. Audio ticks, draft edits and status-only refreshes
+        // deliberately do not invalidate unchanged timeline rows.
+        rowContext = new JSONArray().put(viewName).put(chat).put(appScale).put(nativeFontScale)
+            .put(TimeZone.getDefault().getID()).put(Locale.getDefault().toString())
+            .put(payload.optString("agent")).put(payload.optString("sessionKey"))
+            .put(payload.optString("sessionId")).put(payload.optString("controlRunId"))
+            .put(payload.optString("name")).put(payload.optString("color")).put(palette).toString();
+        String signature = rowContext + ":" + String.valueOf(content) + ":" + String.valueOf(sessionWork)
+            + ":" + String.valueOf(payload.optJSONArray("pins"));
         if (signature.equals(rowsSignature)) return;
         rowsSignature = signature;
         int first = list.getFirstVisiblePosition();
@@ -758,6 +776,7 @@ public final class TelegramSurface extends FrameLayout {
         HashSet<String> presentRevisions = new HashSet<>();
         for (Row row : rows) if ("activity".equals(row.type)) presentRevisions.add(expansionKey(row));
         expanded.retainAll(presentRevisions);
+        adapter.retainCurrentRowViews();
         adapter.notifyDataSetChanged();
         final String expectedIdentity = identity;
         if ((chat || "activity".equals(viewName)) && follow) list.post(() -> { if (identity.equals(expectedIdentity)) { jumpToLatest(); replacingRows = false; } });
@@ -804,9 +823,9 @@ public final class TelegramSurface extends FrameLayout {
         String preview = pin.optString("title", pin.optString("text", "Pinned message unavailable in this history window"));
         pinTitle.setMaxLines(1);
         pinTitle.setEllipsize(TextUtils.TruncateAt.END);
-        pinTitle.setText(compactLayout ? "Pinned" + (count > 1 ? " " + (pinPosition + 1) + "/" + count : "")
+        setText(pinTitle, compactLayout ? "Pinned" + (count > 1 ? " " + (pinPosition + 1) + "/" + count : "")
             + (pin.optBoolean("sourceAvailable", true) ? " · " : " · Saved · ") + preview : fullTitle);
-        pinPreview.setText(preview);
+        setText(pinPreview, preview);
         pinPreview.setVisibility(compactLayout ? GONE : VISIBLE);
         pinBar.setContentDescription(fullTitle + ". " + preview + ". Tap to open; options include pin navigation, history and unpin.");
     }
@@ -947,14 +966,14 @@ public final class TelegramSurface extends FrameLayout {
         else if (supplied instanceof JSONObject) progress = " · " + Math.max(0, Math.min(100, ((JSONObject)supplied).optInt("percent"))) + "%";
         String report = audio.optString("messageId");
         String reportLabel = report.length() > 16 ? report.substring(report.length() - 16) : report;
-        voice.setText(source + " · " + label + " · " + reportLabel + " · " + state + progress
+        setText(voice, source + " · " + label + " · " + reportLabel + " · " + state + progress
             + ("preparing".equals(state) || "loading".equals(state) || "downloading".equals(state) ? " · " + clock(audio.optLong("elapsedMs")) + " elapsed" : ""));
         voice.setContentDescription(source + ". " + label + ". " + state + ". Exact report " + audio.optString("messageId"));
-        pauseAudio.setText("paused".equals(state) ? "Resume" : "Pause");
+        setText(pauseAudio, "paused".equals(state) ? "Resume" : "Pause");
         pauseAudio.setEnabled(audio.optBoolean("canPause") && ("paused".equals(state) || "playing".equals(state)));
         long duration = Math.max(0, audio.optLong("durationMs"));
         long position = Math.max(0, Math.min(duration, audio.optLong("positionMs")));
-        audioTime.setText(clock(position) + " / " + (duration > 0 ? clock(duration) : "–:––"));
+        setText(audioTime, clock(position) + " / " + (duration > 0 ? clock(duration) : "–:––"));
         audioSeek.setEnabled(audio.optBoolean("canSeek") && duration > 0);
         if (!seekingAudio) audioSeek.setProgress(duration > 0 ? (int)(position * 1000 / duration) : 0);
     }
@@ -1175,12 +1194,38 @@ public final class TelegramSurface extends FrameLayout {
         // ListView invokes its scroll listener immediately when registered,
         // before the constructor has created the overlay control.
         if (jump == null) return;
-        jump.setText("activity".equals(viewName) ? "↓ Resume live" + (unreadTimeline > 0 ? " · " + unreadTimeline + " new" : "") : "↓ Latest" + (unreadTimeline > 0 ? " · " + unreadTimeline + " new" : ""));
+        setText(jump, "activity".equals(viewName) ? "↓ Resume live" + (unreadTimeline > 0 ? " · " + unreadTimeline + " new" : "") : "↓ Latest" + (unreadTimeline > 0 ? " · " + unreadTimeline + " new" : ""));
         jump.setVisibility(showing() && (chat || "activity".equals(viewName)) && !listAtEnd ? VISIBLE : GONE);
     }
 
     private final class SurfaceAdapter extends BaseAdapter {
         final ArrayList<Row> rows = new ArrayList<>();
+        // Own only discarded convertViews handed to getView, never returned
+        // views that ListView may still hold in its own recycler. Exact rows
+        // can reclaim their selectable text/bubbles/controls on a later pass.
+        private static final int MAX_ROW_VIEWS = 24;
+        private final LinkedHashMap<RowBinding, View> rowViews = new LinkedHashMap<>(32, .75f, true);
+
+        void clearRowViews() { rowViews.clear(); }
+
+        private RowBinding binding(int position) {
+            Row row = rows.get(position);
+            boolean outgoing = row.value.optBoolean("localSubmission") || "user".equals(row.value.optString("role"));
+            boolean message = "message".equals(row.type);
+            return new RowBinding(rowContext, row, "activity".equals(row.type) && expanded.contains(expansionKey(row)), isPinned(row.value.optString("id")),
+                message && adjacentMessage(position, -1, outgoing), message && adjacentMessage(position, 1, outgoing));
+        }
+
+        void retainCurrentRowViews() {
+            HashSet<RowBinding> current = new HashSet<>();
+            for (int i = 0; i < rows.size(); i++) current.add(binding(i));
+            rowViews.keySet().retainAll(current);
+        }
+
+        private void remember(RowBinding binding, View view) {
+            rowViews.put(binding, view);
+            while (rowViews.size() > MAX_ROW_VIEWS) rowViews.remove(rowViews.keySet().iterator().next());
+        }
 
         @Override public int getCount() { return rows.size(); }
         @Override public Object getItem(int position) { return rows.get(position); }
@@ -1199,11 +1244,13 @@ public final class TelegramSurface extends FrameLayout {
 
         @Override public View getView(int position, View recycled, ViewGroup parent) {
             Row row = rows.get(position);
-            boolean outgoing = row.value.optBoolean("localSubmission") || "user".equals(row.value.optString("role"));
-            String fingerprint = identity + row.key + row.value.toString() + appScale + ":" + nativeFontScale
-                + expanded.contains(expansionKey(row)) + isPinned(row.value.optString("id"))
-                + ("message".equals(row.type) ? ":" + adjacentMessage(position, -1, outgoing) + ":" + adjacentMessage(position, 1, outgoing) : "");
+            RowBinding fingerprint = binding(position);
             if (recycled != null && fingerprint.equals(recycled.getTag())) return recycled;
+            if (recycled != null && recycled.getParent() == null && recycled.getTag() instanceof RowBinding)
+                remember((RowBinding)recycled.getTag(), recycled);
+            View cached = rowViews.remove(fingerprint);
+            // Never steal a view still owned by ListView or another parent.
+            if (cached != null && cached.getParent() == null) return cached;
             View result;
             if ("message".equals(row.type)) result = messageRow(row, position);
             else if ("activity".equals(row.type)) result = activityRow(row);
@@ -1520,16 +1567,47 @@ public final class TelegramSurface extends FrameLayout {
         final String key;
         final String type;
         final JSONObject value;
+        final String content;
+        final String expansion;
         Row(String key, String type, JSONObject value) {
             this.key = key;
             this.type = type;
-            this.value = value;
+            // Snapshot once per changed timeline, not on every getView call.
+            // The bridge may mutate/reuse its model after rendering; a cached
+            // listener must retain the exact record it was created against.
+            this.content = value.toString();
+            try { this.value = new JSONObject(content); }
+            catch (JSONException error) { throw new IllegalArgumentException("Invalid timeline row", error); }
+            String revision = this.value.optString("revision");
+            this.expansion = "activity".equals(type) ? key + ":revision:"
+                + (revision.isEmpty() ? "unavailable:" + content : revision) : "";
+        }
+    }
+
+    private static final class RowBinding {
+        final String context, key, type, content;
+        final boolean expanded, pinned, before, after;
+        final int hash;
+        RowBinding(String context, Row row, boolean expanded, boolean pinned, boolean before, boolean after) {
+            this.context = context; this.key = row.key; this.type = row.type; this.content = row.content;
+            this.expanded = expanded; this.pinned = pinned; this.before = before; this.after = after;
+            int value = context.hashCode();
+            value = 31 * value + key.hashCode(); value = 31 * value + type.hashCode(); value = 31 * value + content.hashCode();
+            value = 31 * value + (expanded ? 1 : 0); value = 31 * value + (pinned ? 1 : 0);
+            value = 31 * value + (before ? 1 : 0); hash = 31 * value + (after ? 1 : 0);
+        }
+        @Override public int hashCode() { return hash; }
+        @Override public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof RowBinding)) return false;
+            RowBinding that = (RowBinding) other;
+            return expanded == that.expanded && pinned == that.pinned && before == that.before && after == that.after
+                && context.equals(that.context) && key.equals(that.key) && type.equals(that.type) && content.equals(that.content);
         }
     }
 
     private static String expansionKey(Row row) {
-        String revision = row.value.optString("revision");
-        return row.key + ":revision:" + (revision.isEmpty() ? "unavailable:" + stableId(row.value.toString()) : revision);
+        return row.expansion;
     }
 
     private static String activityKey(JSONObject event, String id) {

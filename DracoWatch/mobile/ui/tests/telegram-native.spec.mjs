@@ -1,6 +1,8 @@
 // Changed native Telegram bridge only. Synthetic authenticated projections and a
 // fake Android transport: no gateway, model input, production media or synthesis.
 // Run: node mobile/ui/tests/telegram-native.spec.mjs
+// Bounded avatar/runtime labels: add --avatar-label-only.
+// Bounded exact-run receipt custody: add --strict-steer-only.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -39,6 +41,7 @@ try{
   await call('Emulation.setDeviceMetricsOverride',{width:412,height:900,deviceScaleFactor:3,mobile:true});
   await call('Page.addScriptToEvaluateOnNewDocument',{source:`
     window.__requests=[];window.__calls=[];window.__renders=[];window.__speech=[];window.__failStorage=false;
+    window.__detailBuilds=0;const createElement=document.createElement.bind(document);document.createElement=(name,...args)=>{if(name==='dl')__detailBuilds++;return createElement(name,...args);};
     window.__agents=['main','forge','atlas','aera-new','vvv','daedalus'];window.__sessions=Object.fromEntries(__agents.map(id=>[id,'physical:'+id]));
     window.__caps={send:true,queue:true,steer:true,strictSteer:false,abort:true,attachments:true,voice:true,reply:true,speech:true,commands:true};
     window.__now=Date.now();window.__extra=[];window.__text={};window.__workRevision='e'.repeat(64);window.__progress=null;window.__progressTool='progress_card';
@@ -74,6 +77,117 @@ try{
   const url='http://127.0.0.1:'+server.address().port+'/';
   await call('Page.navigate',{url});await wait('!!window.DracoWatch&&window.__last?.live');
   await expect('__last.visible&&!__last.chat&&__last.roster.length===6&&__last.activity.length===12','native roster and all six public/work streams render');
+  await expect('(()=>{const card=[...document.querySelectorAll(".agent-card")].find(card=>card.querySelector(".card-name").textContent.startsWith("Daedalus"));return card.querySelector(".card-meta").textContent.includes("Avatar: provisional")&&!card.querySelector(".card-status").textContent.includes("TEMP")})()','provisional avatar metadata is explicitly separate from roster occupancy');
+  await expect('(()=>{const canvas=document.createElement("canvas");canvas.style.cssText="position:fixed;top:0;left:0;width:412px;height:650px";document.body.append(canvas);const ctx=canvas.getContext("2d"),drawn=[],fillText=ctx.fillText.bind(ctx);ctx.fillText=(text,...args)=>{drawn.push(text);fillText(text,...args)};const room=new DracoChamber.Chamber(canvas),observed=[];for(const status of ["active","idle","queued","unknown"]){drawn.length=0;room.update(new Map(DracoChamber.SPECS.map(spec=>[spec.id,{status}])),true,"daedalus",false);observed.push(drawn[drawn.indexOf("Daedalus")+1]);}drawn.length=0;room.update(new Map([["daedalus",{status:"active"}]]),false,"daedalus",false);observed.push(drawn[drawn.indexOf("Daedalus")+1]);room.show(false);canvas.remove();return JSON.stringify(observed)===JSON.stringify(["RUN OPEN","NO OPEN RUN","QUEUED","UNOBSERVED","UNOBSERVED"])})()','Chamber shows only occupancy for Daedalus in observed, unknown and disconnected states; avatar TEMP never enters runtime labels');
+  await act('openChat',{agent:'daedalus'});await wait('__last.chat&&__last.agent==="daedalus"');await act('details');
+  await expect('(()=>{const facts=[...document.querySelectorAll("#details-facts > div")],avatar=facts.find(fact=>fact.querySelector("dt").textContent==="Avatar"),status=facts.find(fact=>fact.querySelector("dt").textContent==="Observed state");return document.getElementById("details-dialog").open&&avatar?.querySelector("dd").textContent.startsWith("Provisional;")&&status?.querySelector("dd").textContent==="No open run"&&!document.getElementById("details-role").textContent.includes("temporary")})()','Agent details names provisional artwork separately from observed runtime occupancy');
+  await evaluate('document.getElementById("details-close").click()');
+  if(process.argv.includes('--smooth-only')){
+    await act('openChat',{agent:'forge'});await wait('__last.chat&&__last.agent==="forge"&&__last.work[0]?.detail.includes("call:physical:forge")');
+    await evaluate('DracoNative.refresh=()=>__calls.push({method:"quietRefresh"});window.__beforeDetails=__detailBuilds;window.__beforeRenders=__renders.length;for(let i=0;i<25;i++)__act("draft",{text:"Exact typing batch "+i});');
+    await wait('__last.draft==="Exact typing batch 24"');
+    await expect('__detailBuilds===__beforeDetails','typing reuses exact current event details instead of rebuilding their DOM');
+    await expect('__renders.length-__beforeRenders<=2','a typing burst is coalesced into display-frame native updates');
+    await expect('!document.getElementById("conversation-list").childElementCount','native chat does not build a duplicate hidden rich-text timeline');
+    await expect('JSON.parse(localStorage.getItem("draco-watch-client-v2")).drafts.forge==="Exact typing batch 24"','presentation batching retains the exact newest draft');
+    await evaluate('(()=>{const s=__snapshot("forge"),e=s.workActivity.find(e=>e.agent==="forge");e.evidenceRevision="b".repeat(64);e.observation.result={matchCount:17};onDracoSnapshot(s)})()');
+    await wait('__last.work[0]?.revision==="b".repeat(64)');
+    await expect('__last.work[0].detail.includes("Memory matches: 17")&&__detailBuilds>__beforeDetails','same-call revised source rebuilds cached details rather than showing stale facts');
+    await act('view',{view:'activity'});await wait('__last.view==="activity"&&!__last.chat');
+    await expect('__last.activity.some(e=>e.agent==="forge"&&e.detail.includes("Memory matches: 17"))','Activity supplies complete expanded evidence when it becomes visible');
+    await act('openChat',{agent:'forge'});await act('composer');await wait('!__last.visible');
+    await expect('document.getElementById("conversation-list").textContent.includes("Readable forge report.")&&document.getElementById("draft").value==="Exact typing batch 24"','explicit fallback builds current rich text and retains exact draft on demand');
+    await evaluate('DracoWatch.back()');await wait('__last.visible&&__last.chat');
+    await expect('__last.draft==="Exact typing batch 24"&&!__requests.some(r=>r.method==="POST"&&!r.path.startsWith("/v1/diagnostics"))&&!__speech.length','smooth native/fallback navigation performs no input, speech or replay');
+  }
+  if(process.argv.includes('--workflow-only')){
+    await evaluate('__caps.strictSteer=true;__caps.durableStop=true;onDracoConnection({state:"offline"});onDracoSnapshot(__snapshot("atlas"))');
+    await act('openChat',{agent:'atlas'});await act('draft',{text:'Unsent draft survives hold release'});await wait('__last.can.send');
+    await evaluate(`window.__heldSnapshot=(id='hold-current')=>{const s=__snapshot('atlas'),a=s.agents.find(a=>a.id==='atlas');a.runPhase={phase:'tool-wait',runId:'run:'+a.sessionId,observedAt:Date.now()-50,expiresAt:Date.now()+15000};a.continuationHold={id,heldAt:Date.now()-100,sessionId:a.sessionId};a.capabilities={...__caps,send:false,queue:false,steer:false,releaseHold:true};return s;};onDracoSnapshot(__heldSnapshot())`);await pause(100);
+    await expect('!__last.can.send&&!__last.can.queue&&!__last.can.steer&&!__last.can.attachments&&!__last.can.voice','fresh hold revokes cached Send/Queue/Steer/file/voice privileges immediately');
+    await expect('__last.status.includes("Waiting for tool")&&__last.status.includes("Automatic continuation held")','native header keeps present tool wait and continuation hold separate');
+    for(const mode of ['send','queue','steer'])await act('send',{mode,text:'Unsent draft survives hold release'});
+    await expect('__requests.filter(r=>r.path==="/v1/message").length===0&&__last.draft==="Unsent draft survives hold release"','held controls create no input custody or send and preserve exact draft');
+    await act('details');await expect('document.getElementById("release-continuation-hold")&&!document.getElementById("release-continuation-hold").disabled','Agent details offers explicit exact-hold release');
+    await evaluate('onDracoSnapshot(__heldSnapshot("replacement-hold"));document.getElementById("release-continuation-hold").click()');await pause(100);
+    await expect('__requests.filter(r=>r.path==="/v1/hold/release").length===0','stale open details cannot release a replacement hold');
+    await evaluate('document.getElementById("details-dialog").close()');await act('details');
+    await evaluate('document.getElementById("release-continuation-hold").click()');await pause(100);
+    await expect('(()=>{const rows=__requests.filter(r=>r.path==="/v1/hold/release");return rows.length===1&&rows[0].body.holdId==="replacement-hold"&&rows[0].body.sessionId===__last.sessionId&&rows[0].body.sessionKey==="agent:atlas:telegram:direct:8745908879"&&!__last.can.send})()','release is one deliberate exact hold/session request, not input or automatic resume');
+    await evaluate(`window.__releaseRequest=__requests.find(r=>r.path==='/v1/hold/release');onDracoResponse({id:__releaseRequest.id,ok:true,data:{...__releaseRequest.body,id:__releaseRequest.body.idempotencyKey,status:'hold-released',completed:false}});onDracoSnapshot(__snapshot('atlas'));`);await pause(150);
+    await expect('__last.can.send&&__last.draft==="Unsent draft survives hold release"&&__requests.filter(r=>r.path==="/v1/message").length===0','matching release enables fresh work without sending or clearing the saved draft');
+    await expect('JSON.parse(localStorage.getItem("draco-watch-client-v2")).outbox.find(r=>r.path==="/v1/hold/release").state==="accepted"&&!__speech.length&&__calls.every(r=>r.method!=="playMedia")','release receipt settles exact saved custody without synthesis or playback');
+    await act('send',{mode:'send',text:'Unsent draft survives hold release'});await pause(80);
+    await evaluate(`window.__oldInput=__requests.find(r=>r.path==='/v1/message');onDracoResponse({id:__oldInput.id,ok:false,error:'Lost receipt',uncertain:true});onDracoSnapshot(__heldSnapshot('separate-hold'));`);await pause(80);
+    await act('details');await expect('!document.getElementById("release-continuation-hold").disabled','uncertain earlier input does not deadlock separate hold-release control');
+    await evaluate('document.getElementById("release-continuation-hold").click()');await pause(80);
+    await expect('__last.outbox.length===2&&__last.outbox.some(r=>r.path==="/v1/message"&&r.state==="uncertain")&&__last.outbox.some(r=>r.path==="/v1/hold/release"&&r.state==="pending")','native outbox exposes both unresolved custody records without erasing original input');
+    await evaluate(`(()=>{const r=__requests.filter(r=>r.path==='/v1/hold/release').at(-1);onDracoResponse({id:r.id,ok:true,data:{...r.body,id:r.body.idempotencyKey,status:'hold-released'}});onDracoSnapshot(__snapshot('atlas'));})()`);await pause(80);
+    await expect('__last.outbox.length===1&&__last.outbox[0].id===__oldInput.body.idempotencyKey&&__last.outbox[0].retry&&!__last.can.send&&__requests.filter(r=>r.path==="/v1/message").length===1','release preserves original uncertain input and exposes exact-ID recovery without automatic resend');
+    await expect('__last.can.abort','unconfirmed input does not disable exact-run Stop');
+    await act('stop');await pause(80);
+    await evaluate(`window.__oldStop=__requests.find(r=>r.path==='/v1/abort');onDracoResponse({id:__oldStop.id,ok:false,error:'Lost Stop receipt',uncertain:true});const s=__heldSnapshot('hold-after-lost-stop');s.historyState={status:'unavailable'};s.agents.find(a=>a.id==='atlas').historyAvailable=false;onDracoSnapshot(s);`);await pause(80);
+    await act('details');await expect('!document.getElementById("release-continuation-hold").disabled','lost Stop receipt and unavailable public history do not deadlock fresh exact-hold release');
+    await evaluate('document.getElementById("release-continuation-hold").click()');await pause(80);
+    await expect('__last.outbox.length===3&&__last.outbox.some(r=>r.id===__oldStop.body.idempotencyKey&&r.state==="uncertain")','separate input, Stop and release custody all remain visible');
+    await evaluate(`(()=>{const r=__requests.filter(r=>r.path==='/v1/hold/release').at(-1);onDracoResponse({id:r.id,ok:true,data:{...r.body,id:r.body.idempotencyKey,status:'not-dispatched',dispatched:false,reason:'displayed-hold-unavailable'}});})()`);await pause(80);
+    await act('details');await expect('!document.getElementById("release-continuation-hold").disabled','proven predispatch refusal permits a new deliberate release instead of permanent uncertainty');
+    await evaluate('document.getElementById("release-continuation-hold").click()');await pause(80);
+    await expect('__requests.filter(r=>r.path==="/v1/message").length===1&&__requests.filter(r=>r.path==="/v1/abort").length===1&&!__speech.length','control recovery never replays input, Stop or audio');
+  }
+  if(process.argv.includes('--strict-steer-only')){
+    await evaluate('__caps.strictSteer=true;onDracoConnection({state:"offline"});onDracoSnapshot(__snapshot("atlas"))');
+    await act('openChat',{agent:'atlas'});await act('draft',{text:'Exact selected-run fixture input'});
+    await wait('__last.can.steer');
+    await evaluate(`
+      window.__saved=()=>JSON.parse(localStorage.getItem('draco-watch-client-v2'));
+      window.__posts=()=>__requests.filter(r=>r.method==='POST'&&r.path!=='/v1/diagnostics');
+      window.__steerReceipt=(request,status='pending',steering={})=>({id:request.id,agent:request.body.agent,
+        sessionKey:'agent:'+request.body.agent+':telegram:direct:8745908879',sessionId:request.body.sessionId,
+        runId:request.id,requestedRunId:request.body.runId,status:'accepted',strictSteer:true,completed:false,replayAllowed:false,
+        steering:{expectedRunId:request.body.runId,targetRunId:request.body.runId,status,replayAllowed:false,...steering}});
+      window.__receiptSnapshot=receipt=>{const s=__snapshot('atlas');s.steeringReceipts=[receipt];onDracoSnapshot(s)};
+      onDracoAttachment({agent:'atlas',state:'ready',id:'steer-original-asset',name:'Original fixture',mimeType:'audio/ogg',sizeBytes:40});
+      onDracoAttachment({agent:'forge',state:'ready',id:'other-agent-asset',name:'Other agent fixture',mimeType:'application/octet-stream',sizeBytes:40});
+      document.getElementById('input-mode').value='steer';document.getElementById('input-mode').dispatchEvent(new Event('change'));
+    `);await pause(90);
+    await expect('document.getElementById("copy-note").textContent.includes("no separate Telegram input copy")','Steer mode explains that no separate Telegram echo is sent');
+    await act('send',{mode:'steer',text:'Exact selected-run fixture input'});
+    await expect('__posts().length===1&&__posts()[0].path==="/v1/message"&&__posts()[0].body.mode==="steer"&&__posts()[0].body.runId==="run:physical:atlas"&&__posts()[0].body.sessionId==="physical:atlas"&&JSON.stringify(__posts()[0].body.attachmentIds)===JSON.stringify(["steer-original-asset"])','one immutable selected-run submission captures only this agent’s original attachments');
+    await evaluate('window.__firstSteer=__posts()[0];onDracoResponse({id:__firstSteer.id,ok:true,data:__steerReceipt(__firstSteer)})');await pause(90);
+    await expect('__saved().outbox.find(r=>r.id===__firstSteer.id).outcome.steering.status==="pending"&&__last.draft==="Exact selected-run fixture input"&&__saved().drafts.atlas===__last.draft&&!__last.can.send&&!__last.can.queue&&!__last.can.steer&&__last.outbox.find(r=>r.id===__firstSteer.id).retry===false','pending acknowledgment retains exact draft and no-replay guard; admission is not adoption');
+    await expect('__last.attachments.some(a=>a.id==="steer-original-asset")&&!__calls.some(c=>c.method==="releaseAttachment")&&document.getElementById("toast").textContent.includes("Do not replay")','pending admission neither releases staged input nor advises retry');
+    await act('composer');
+    await expect('![...document.querySelectorAll("#conversation-list button,#outbox-status button")].some(button=>button.textContent==="Retry original ID")&&!document.getElementById("outbox-status").hidden','fallback conversation and outbox expose unconfirmed Steer without a retry button');
+    await evaluate('document.getElementById("native-return").click()');await pause(90);
+    await act('retry',{id:await evaluate('__firstSteer.id')});
+    for(const mode of ['send','queue','steer'])await act('send',{mode,text:'Exact selected-run fixture input'});
+    await expect('__posts().length===1&&__last.outbox.find(r=>r.id===__firstSteer.id).retry===false','native retry and repeated send modes cannot replay pending Steer or substitute follow-up');
+    await evaluate(`
+      for(const change of [
+        receipt=>{receipt.steering.expectedRunId='wrong-target'},
+        receipt=>{receipt.steering.targetRunId='wrong-target'},
+        receipt=>{receipt.sessionId='wrong-physical-session'},
+        receipt=>{receipt.sessionKey='agent:atlas:other'},
+        receipt=>{receipt.agent='forge'}
+      ]){const receipt=__steerReceipt(__firstSteer,'accepted');change(receipt);__receiptSnapshot(receipt)}
+    `);await pause(90);
+    await expect('__saved().outbox.find(r=>r.id===__firstSteer.id).outcome.steering.status==="pending"&&__last.draft==="Exact selected-run fixture input"&&!__last.can.send&&!__calls.some(c=>c.method==="releaseAttachment")','wrong target, physical session, logical session and agent receipts cannot settle the original request');
+    await evaluate('onDracoAttachment({agent:"atlas",state:"ready",id:"newer-staged-asset",name:"Newer fixture",mimeType:"application/octet-stream",sizeBytes:40});__receiptSnapshot(__steerReceipt(__firstSteer,"accepted"))');await pause(90);
+    await expect('__saved().outbox.find(r=>r.id===__firstSteer.id).outcome.steering.status==="accepted"&&__last.draft===""&&__saved().drafts.atlas===""&&!document.getElementById("draft").value&&__last.attachments.some(a=>a.id==="newer-staged-asset")&&__saved().attachments.some(a=>a.id==="other-agent-asset")&&JSON.stringify(__calls.filter(c=>c.method==="releaseAttachment").map(c=>c.id))===JSON.stringify(["steer-original-asset"])','exact terminal snapshot clears only unchanged visible/saved draft and releases only original staged attachments');
+    await evaluate('__receiptSnapshot(__steerReceipt(__firstSteer,"accepted"))');await pause(90);
+    await expect('__posts().length===1&&__calls.filter(c=>c.method==="releaseAttachment").length===1','repeated terminal snapshots perform no replay or duplicate attachment release');
+    await act('draft',{text:'Second exact selected-run fixture input'});await act('send',{mode:'steer',text:'Second exact selected-run fixture input'});
+    await evaluate('window.__secondSteer=__posts()[1];onDracoResponse({id:__secondSteer.id,ok:true,data:__steerReceipt(__secondSteer)})');await pause(90);
+    await act('draft',{text:'Newer unsent fixture text must survive'});
+    await evaluate('onDracoAttachment({agent:"atlas",state:"ready",id:"future-draft-asset",name:"Future fixture",mimeType:"application/octet-stream",sizeBytes:40});__receiptSnapshot(__steerReceipt(__secondSteer,"accepted"))');await pause(90);
+    await expect('__last.draft==="Newer unsent fixture text must survive"&&__saved().drafts.atlas===__last.draft&&__last.attachments.some(a=>a.id==="future-draft-asset")&&!__last.attachments.some(a=>a.id==="newer-staged-asset")&&JSON.stringify(__calls.filter(c=>c.method==="releaseAttachment").map(c=>c.id))===JSON.stringify(["steer-original-asset","newer-staged-asset"])','late acceptance preserves a newer visible/saved draft and newer unrelated attachment');
+    await evaluate('window.__capsReadsBefore=__requests.filter(r=>r.path.startsWith("/v1/capabilities")).length;const downgraded=__snapshot("atlas");downgraded.agents.find(a=>a.id==="atlas").capabilities={...__caps,steer:false,strictSteer:false};onDracoSnapshot(downgraded)');await pause(90);
+    await expect('__caps.strictSteer===true&&__requests.filter(r=>r.path.startsWith("/v1/capabilities")).length===__capsReadsBefore&&!__last.can.steer','fresh snapshot capability revocation defeats same-session cached strict-Steer capability');
+    await act('send',{mode:'steer',text:'Newer unsent fixture text must survive'});
+    await expect('__posts().length===2&&__posts().every(r=>r.path==="/v1/message"&&r.body.mode==="steer"&&r.body.retry===false)&&!__speech.length&&__calls.every(c=>c.method!=="playMedia")&&__last.draft==="Newer unsent fixture text must survive"','capability loss dispatches no replay, Queue fallback, echo, speech or playback; newer draft remains intact');
+  }
+  if(!process.argv.includes('--avatar-label-only')&&!process.argv.includes('--strict-steer-only')&&!process.argv.includes('--workflow-only')&&!process.argv.includes('--smooth-only')){
   await act('openChat',{agent:'forge'});await wait('__last.chat&&__last.agent==="forge"&&__last.can.speech');
   await expect('__last.sessionId==="physical:forge"&&__last.messages.every(m=>m.id.includes("physical:forge"))&&__last.work[0].detail.includes("call:physical:forge")','native chat contains exact physical-session messages and safe tool identity');
   await evaluate('window.__beforeProgressSpeech=__speech.length;window.__beforeProgressMessages=JSON.stringify(__last.messages);__progress={version:1,source:"operator-progress-card",completed:99,total:99,current:"UNTRUSTED DERIVED FIELD",steps:[{step:"Preserve release",status:"completed"},{step:"Integrate native controls",status:"in_progress"},{step:"Verify handset",status:"pending"}]};__workRevision="a".repeat(64);onDracoSnapshot(__snapshot("forge"))');await pause(90);
@@ -199,6 +313,7 @@ try{
   await expect('__last.status.includes("Conversation run open")&&__last.workSummary.includes("Execution evidence unavailable or stale")','unavailable tool coverage does not erase separately evidenced conversation occupancy');
   await evaluate('onDracoConnection({state:"offline"})');await pause(90);
   await expect('__last.status.includes("Conversation state unknown")&&__last.messages.length>0&&__last.workSummary.includes("stale or disconnected")','disconnect labels current evidence unknown while retaining received chat');
+  }
   check(errors.length===0,'bridge has no uncaught browser errors',errors);
   console.log(JSON.stringify({checks,passed:failures.length===0,failures,productionInput:false,synthesis:false,realMedia:false},null,2));
   if(failures.length)process.exitCode=1;

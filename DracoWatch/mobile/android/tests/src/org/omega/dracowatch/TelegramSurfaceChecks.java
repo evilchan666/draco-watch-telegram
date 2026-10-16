@@ -4,10 +4,13 @@ import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.app.Instrumentation;
 import android.content.Intent;
+import android.database.DataSetObserver;
 import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.text.Spanned;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.text.style.ForegroundColorSpan;
 import android.os.Bundle;
 import android.os.SystemClock;
@@ -16,8 +19,10 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.EditText;
+import android.widget.BaseAdapter;
 import android.widget.ImageView;
 import android.widget.ListView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import org.json.JSONArray;
@@ -101,6 +106,16 @@ public final class TelegramSurfaceChecks extends Instrumentation {
     }
     private View messageRow(String id) throws Exception {return rowForKey("message:"+id);}
     private View localRow(String id) throws Exception {return rowForKey("local-request:"+JSONObject.quote(id));}
+    private int rowPosition(String key) throws Exception {
+        ListView list=timeline();
+        return ui(()->{
+            for(int i=0;i<list.getAdapter().getCount();i++){
+                Object item=list.getAdapter().getItem(i);Field field=item.getClass().getDeclaredField("key");field.setAccessible(true);
+                if(key.equals(field.get(item)))return i;
+            }
+            throw new AssertionError("Missing row position "+key);
+        });
+    }
     private Map<String,Long> dayRows() throws Exception {
         ListView list=timeline();Map<String,Long> result=new HashMap<>();
         for(int i=0;i<ui(()->list.getAdapter().getCount());i++){
@@ -376,6 +391,82 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             can.put("abort",true).put("durableStop",true);
         }
     }
+    private void immutableTimelineReuse() throws Exception {
+        JSONObject model=base(true,"atlas");JSONArray messages=new JSONArray();long start=1700000000000L;
+        for(int i=0;i<40;i++)messages.put(json("id","cache-"+i,"role","assistant","text","Exact cached record "+i,
+            "timestamp",start+i*1000,"fullAvailable",true,"canPin",true));
+        model.put("messages",messages).put("pins",new JSONArray()).put("controlRunId","cache-run");render(model);
+        ListView timeline=timeline();BaseAdapter adapter=(BaseAdapter)ui(()->timeline.getAdapter());
+        int[] notifications={0},labelWrites={0};
+        DataSetObserver observer=new DataSetObserver(){@Override public void onChanged(){notifications[0]++;}};
+        TextWatcher watcher=new TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            public void onTextChanged(CharSequence s,int start,int before,int count){labelWrites[0]++;}
+            public void afterTextChanged(Editable value){}
+        };
+        ui(()->{
+            adapter.registerDataSetObserver(observer);
+            for(String id:new String[]{"telegram-title","telegram-stop-run","telegram-speed","telegram-send-mode","telegram-nav-chats"})
+                ((TextView)requireTag(id)).addTextChangedListener(watcher);
+            return null;
+        });
+        for(int i=0;i<3;i++){
+            model.put("status","Fresh status "+i).put("draft","Exact draft "+i).put("voiceStatus","Fresh voice state "+i)
+                .put("audio",json("id","cache-audio","agent","atlas","sessionId","physical-atlas","messageId","cache-39",
+                    "state","paused","source","recording","positionMs",100+i*100,"durationMs",10000,"canPause",true));
+            render(model);
+        }
+        check(notifications[0]==0,"status draft and audio ticks do not notify unchanged timeline rows");
+        check(labelWrites[0]==0,"polling and audio updates do not rewrite unchanged native toolbar labels");
+        ui(()->{
+            adapter.unregisterDataSetObserver(observer);
+            for(String id:new String[]{"telegram-title","telegram-stop-run","telegram-speed","telegram-send-mode","telegram-nav-chats"})
+                ((TextView)requireTag(id)).removeTextChangedListener(watcher);
+            return null;
+        });
+        int position=rowPosition("message:cache-0");View original=row(position);
+        check(ui(()->original.getParent()==null),"reuse fixture is an offscreen detached native message");
+        View other=ui(()->adapter.getView(position+1,original,timeline));
+        check(ui(()->adapter.getView(position,other,timeline))==original,"different recycled row reuses exact detached message hierarchy");
+        ui(()->adapter.getView(position+1,original,timeline));
+        LinearLayout foreignParent=ui(()->{LinearLayout group=new LinearLayout(activity);group.addView(original);return group;});
+        View notStolen=ui(()->adapter.getView(position,null,timeline));
+        check(notStolen!=original&&ui(()->original.getParent())==foreignParent,"row cache never steals a view owned by another parent");
+        ui(()->{foreignParent.removeView(original);return null;});
+        ui(()->{View carried=null;for(int i=0;i<adapter.getCount();i++)carried=adapter.getView(i,carried,timeline);return null;});
+        Field cache=adapter.getClass().getDeclaredField("rowViews");cache.setAccessible(true);
+        check(ui(()->((Map<?,?>)cache.get(adapter)).size())<=24,"exact native row-view cache stays bounded across long history");
+        View frozen=row(position);messages.getJSONObject(0).put("text","Changed owner text only after render");
+        View beforeRender=ui(()->adapter.getView(position,frozen,timeline));
+        check(beforeRender==frozen&&exactText(beforeRender,"Exact cached record 0")!=null,
+            "mutating incoming JSON cannot alter immutable row content or listeners before render");
+        render(model);View updated=row(position);
+        check(updated!=frozen&&exactText(updated,"Changed owner text only after render")!=null,
+            "changed exact record replaces cached hierarchy and shows new full text");
+        model.put("pins",new JSONArray().put(json("messageId","cache-0","title","Exact pin")));render(model);
+        View pinned=row(position);
+        check(pinned!=updated&&exactText(pinned,"ATLAS · Pinned")!=null,"pin-only update refreshes native message pin state");
+        messages.getJSONObject(1).put("role","user");render(model);
+        View regrouped=ui(()->adapter.getView(position,pinned,timeline));
+        check(regrouped!=pinned,"adjacent sender change cannot reuse an obsolete Telegram bubble grouping");
+        model.put("controlRunId","cache-successor");render(model);View successor=row(position);
+        check(successor!=regrouped,"run replacement cannot reuse captured prior-run listeners");
+        View staleFull=successor.findViewWithTag("telegram-full-cache-0");
+        model.put("sessionId","physical-atlas-replacement");render(model);View replacement=row(position);int before=actions.size();click(staleFull);
+        check(replacement!=successor&&event(before,"full")==null,"physical-session replacement discards cache and rejects old full-message action");
+        JSONObject work=base(true,"atlas");JSONObject observation=json("id","cached-observation","agent","atlas","sessionId","physical-atlas",
+            "timestamp",start,"revision","revision-1","detail","Exact supplied result","ownerDetail",true,"canPin",true);
+        work.put("work",new JSONArray().put(observation));render(work);
+        String key="activity:"+JSONObject.quote("atlas")+":"+JSONObject.quote("physical-atlas")+":"+JSONObject.quote("cached-observation");
+        View first=rowForKey(key);View owner=first.findViewWithTag("telegram-owner-detail-cached-observation");
+        click(first.findViewWithTag("telegram-expand-cached-observation"));
+        View expanded=rowForKey(key);check(expanded.findViewWithTag("telegram-evidence-cached-observation")!=null,
+            "cached row expands exact same-revision evidence without losing the record");
+        observation.put("revision","revision-2").put("detail","Exact replacement result");render(work);View revised=rowForKey(key);
+        check(revised!=first&&revised!=expanded&&revised.findViewWithTag("telegram-evidence-cached-observation")==null,
+            "revision replacement drops cached expanded hierarchy and old evidence");
+        before=actions.size();click(owner);check(event(before,"ownerDetail")==null,"cached old-revision owner-detail action cannot dispatch");
+    }
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -386,6 +477,10 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             if(flag("workflowOnly")){
                 workflowControlLabels();
                 result.putString("stream","Workflow native checks passed: "+checks+". Unpaired APK, synthetic listener; no live agent input.\n");finish(0,result);return;
+            }
+            if(flag("timelineOnly")){
+                immutableTimelineReuse();manualPlayerAndLiveTimeline();
+                result.putString("stream","Timeline reuse native checks passed: "+checks+". Unpaired APK, synthetic listener; no playback or production input.\n");finish(0,result);return;
             }
             localInspectionConsent();
             render(base(false,"main"));
@@ -402,6 +497,7 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             identityModesAndInlineEvidence();
             localRequestsAndDates();
             manualPlayerAndLiveTimeline();render(base(true,"atlas"));
+            immutableTimelineReuse();render(base(true,"atlas"));
             check(ui(()->requireTag("telegram-pinned-banner").getVisibility())==View.VISIBLE,"native pin banner is visible with retained pins");
             int beforeDraft=actions.size();EditText draft=(EditText)requireTag("telegram-draft");ui(()->{draft.requestFocus();draft.setText("EXACT NEW SYNTHETIC DRAFT\nKeep every character.");return null;});
             JSONObject draftEvent=event(beforeDraft,"draft");check(exactScope(draftEvent,"atlas")&&draftEvent.getJSONObject("data").optString("text").equals(draft.getText().toString()),"native draft callback keeps exact text and physical-session scope");

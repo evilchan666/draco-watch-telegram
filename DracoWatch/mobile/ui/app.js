@@ -301,9 +301,9 @@
     const reason=agent?.capabilities?.reasons||caps().reasons||{};
     const inputNote='Send and Queue submit ordinary input (follow-up while a run is open); neither steers an open run. ';
     $('capability-note').hidden=live();$('capability-note').textContent='Offline · draft saved';$('action-note').textContent=!live()?'Reconnect before sending.':unresolved?'Check the unconfirmed submission before sending more.':inputNote+(caps().strictSteer!==true?'Steer unavailable: no verified exact-run injection.':!allowed('steer')?'Steer unavailable: '+(reason.steer||'no supported exact-run control.'):'Stop targets only the exact displayed conversation run.');$('copy-note').textContent=$('input-mode').value==='steer'?'Steer is submitted only to the exact displayed run; no separate Telegram input copy is sent.':local.data.preferences.echoToTelegram!==false?'Phone submissions also copy to Telegram. Change this in Settings.':'Telegram copies are off. This submission stays phone-only.';
-    const draft=$('draft');draft.style.height='auto';draft.style.height=Math.min(132,Math.max(48,draft.scrollHeight))+'px';positionNewMessages();
+    if(!telegramEnabled()||telegramLegacy){const draft=$('draft');draft.style.height='auto';draft.style.height=Math.min(132,Math.max(48,draft.scrollHeight))+'px';positionNewMessages();}
   }
-  function positionNewMessages(){if(state.chat)$('new-messages').style.bottom=($('composer').getBoundingClientRect().height+10)+'px';}
+  function positionNewMessages(){if(state.chat&&(!telegramEnabled()||telegramLegacy))$('new-messages').style.bottom=($('composer').getBoundingClientRect().height+10)+'px';}
   function renderOutbox(){
     const container=$('outbox-status'),pending=local.data.outbox.filter(r=>r.agent===state.selected&&['pending','uncertain'].includes(r.state));
     container.hidden=!pending.length;container.replaceChildren();
@@ -340,7 +340,11 @@
   function empty(title,subtitle){const el=create('div','empty-state');el.append(create('strong','',title),create('p','',subtitle));return el;}
   function canReadAloud(message){return live()&&!history()?.saved&&caps().speech===true&&message.role==='assistant'&&message.kind!=='media'&&
     message.publicAttested===true&&message.source==='authenticated-native-history'&&message.sessionId===row()?.sessionId&&!!message.text.trim();}
-  function renderMessages(){const current=history(),rows=conversationRows(),needle=state.search.toLowerCase();
+  function renderMessages(){
+    // Native chat has its own exact rows and scroll anchors. Build the rich-text
+    // fallback only when deliberately opened, not underneath every native poll.
+    if(telegramEnabled()&&!telegramLegacy){renderSignature='';return;}
+    const current=history(),rows=conversationRows(),needle=state.search.toLowerCase();
     const matches=needle?rows.filter(message=>message.text.toLowerCase().includes(needle)):rows,offset=Math.min(messageOffsets.get(state.selected)||0,Math.max(0,matches.length-1)),end=Math.max(0,matches.length-offset),start=Math.max(0,end-50),windowRows=matches.slice(start,end);
     const signature=JSON.stringify([state.selected,live(),windowRows,rows.length,needle,state.playing,state.reply,caps().reply===true,caps().speech===true,[...expandedMessages],[...state.speechPending],offset,current?.saved===true]);if(signature===renderSignature)return;renderSignature=signature;
     const latestScope=state.selected+':'+(row()?.sessionId||''),latest=rows.at(-1),latestKey=latest?JSON.stringify([latest.id,latest.localSubmission===true]):'';
@@ -472,7 +476,7 @@
     $('work-summaries').hidden=!work;$('activity-toolbar').hidden=!work;$('activity-stream-heading').hidden=!work;$('activity-stream-heading').textContent=work?'Detailed work stream':'Live feed';
     $('activity-detail').value=state.activityDetail;$('view-activity').dataset.detail=state.activityDetail;
     const signature=JSON.stringify([live(),state.filter,state.activityMode,state.activityDetail,filtered,coverage.map(source=>[source.agent,source.available,source.status,source.scope,source.work]),[...state.agents].map(([id,agent])=>[id,agent.status,agent.telemetry?.activeSessions,agent.telemetry?.queuedSessions]),[...expandedActivity]]);
-    if(work)renderWorkSummaries();if(signature===activitySignature)return;activitySignature=signature;
+    if(signature===activitySignature)return;activitySignature=signature;if(work)renderWorkSummaries();
     const scope=state.filter+':'+state.activityMode;if(scope!==activityScope){activityScope=scope;activityFollow=true;activityLatestKey='';}
     const latest=filtered.at(-1),nextKey=latest?activityKey(latest):'',changed=activityLatestKey&&nextKey!==activityLatestKey;activityLatestKey=nextKey;
     if(changed&&!activityFollow)$('activity-latest').hidden=false;
@@ -561,15 +565,20 @@
   // device-local request custody; local rows never confer public capabilities.
   // It never has a transport token, raw tool arguments, or an independent send path.
   let telegramTimer=0,telegramSignature='',telegramLegacy=false,telegramFocus=null,telegramIdentity='';
+  // The normalized snapshot owns each event object. Never key this cache by a
+  // call ID alone: a replacement session or revised record must be rebuilt.
+  const telegramDetails=new WeakMap();
   const telegramEnabled=()=>typeof window.DracoNative?.renderTelegram==='function';
-  function telegramSchedule(){if(!telegramEnabled()||telegramTimer)return;telegramTimer=setTimeout(()=>{telegramTimer=0;telegramPublish();},60);}
+  function telegramSchedule(){if(!telegramEnabled()||telegramTimer)return;telegramTimer=requestAnimationFrame(()=>{telegramTimer=0;telegramPublish();});}
   function telegramLocal(id){return conversationRows().find(m=>m.localSubmission===true&&m.id===id);}
   function telegramFind(id){return (history()?.conversation||[]).find(m=>m.id===id&&m.sessionId===row()?.sessionId&&m.publicAttested===true&&m.source==='authenticated-native-history'&&['user','assistant'].includes(m.role))||state.workActivity.find(m=>m.id===id&&m.agent===state.selected&&m.sessionId===row()?.sessionId&&workFresh(m));}
   function telegramDetail(event){
+    if(telegramDetails.has(event))return telegramDetails.get(event);
     // Reuse the same allowlisted evidence renderer as Activity, not JSON/raw payloads.
     const node=create('div'),key=activityKey(event),was=expandedActivity.has(key);expandedActivity.add(key);activityOperation(node,event);if(!was)expandedActivity.delete(key);
     const detail=[...node.children].map(child=>child.tagName==='DL'?[...child.children].map((item,index)=>item.tagName==='DT'?item.textContent+': ':item.textContent+'\n').join(''):child.tagName==='BUTTON'?'':child.textContent).filter(Boolean).join('\n');
-    return detail.length>4096?detail.slice(0,3980)+'\n[Expanded detail limited to 4,096 characters; remaining fields are not shown.]':detail;
+    const value=detail.length>4096?detail.slice(0,3980)+'\n[Expanded detail limited to 4,096 characters; remaining fields are not shown.]':detail;
+    telegramDetails.set(event,value);return value;
   }
   function telegramPayload(){
     const current=history(),sessionId=row()?.sessionId||'',spec=byId.get(state.selected),needle=state.search.toLowerCase();
@@ -577,10 +586,11 @@
     const all=conversationRows().filter(m=>!needle||m.text.toLowerCase().includes(needle));
     const offset=Math.min(messageOffsets.get(state.selected)||0,Math.max(0,all.length-1)),end=Math.max(0,all.length-offset),rows=all.slice(Math.max(0,end-50),end);
     const operations=state.workActivity.filter(e=>e.agent===state.selected&&e.sessionId===sessionId&&workFresh(e));
+    const activityVisible=!state.chat&&state.view==='activity';
     const activity=[],counts=new Map();
     for(const e of state.activity.concat(state.workActivity.filter(workFresh)).filter(e=>state.filter==='all'||e.agent===state.filter).sort((a,b)=>b.timestamp-a.timestamp)){
       const count=counts.get(e.agent)||0;if(count>=12||!byId.has(e.agent))continue;counts.set(e.agent,count+1);
-      const tool=e.source==='authenticated-tool-status';activity.push({id:e.id,agent:e.agent,sessionId:e.sessionId,name:byId.get(e.agent).name,text:(attachmentSummary(e)||observedWorkText(e)).slice(0,12000),timestamp:e.timestamp,kind:publicKind(e),preview:tool?executionPreview(e.observation):'',steps:tool?taskProgress(e.observation)?.steps||[]:[],detail:tool?telegramDetail(e):'',revision:e.evidenceRevision||'',ownerDetail:!!ownerRef(e),stale:!live()||e.receivedOnly===true});
+      const tool=e.source==='authenticated-tool-status';activity.push({id:e.id,agent:e.agent,sessionId:e.sessionId,name:byId.get(e.agent).name,text:(attachmentSummary(e)||observedWorkText(e)).slice(0,12000),timestamp:e.timestamp,kind:publicKind(e),preview:tool?executionPreview(e.observation):'',steps:tool?taskProgress(e.observation)?.steps||[]:[],detail:tool&&activityVisible?telegramDetail(e):'',revision:e.evidenceRevision||'',ownerDetail:!!ownerRef(e),stale:!live()||e.receivedOnly===true});
     }
     activity.sort((a,b)=>a.timestamp-b.timestamp||a.id.localeCompare(b.id));
     const pending=local.unresolved(state.selected);
@@ -589,7 +599,7 @@
       audio:audioPayload(),voiceStatus:$('voice-status').textContent,playbackRate:local.data.preferences.playbackRate,recording:state.recording,actionNote:$('action-note').textContent,copyNote:$('copy-note').textContent,search:state.search,focusMessageId:telegramFocus,
       can:{send:!$('send').disabled,queue:!$('queue').disabled,steer:!$('steer').disabled,abort:!$('stop').disabled,durableStop:allowed('durableStop'),attachments:!$('attach').disabled,voice:!$('record').disabled,speech:caps().speech===true&&live(),older:!$('older-history').disabled},
       messages:rows.map(m=>({id:m.id,agent:m.agent||state.selected,sessionId:m.sessionId,role:m.role,text:m.text.slice(0,24000),fullAvailable:m.text.length>24000,timestamp:m.timestamp,kind:m.kind||'Public report',localSubmission:m.localSubmission===true,submissionState:m.submissionState||'',submissionNote:m.submissionNote||'',attachmentNote:m.attachmentNote||'',deliveryDiagnosis:deliveryDiagnosis(m),canPin:!m.localSubmission&&m.publicAttested===true&&m.source==='authenticated-native-history',canReply:!m.localSubmission&&live()&&!current?.saved&&caps().reply===true&&m.replyAvailable!==false,canRead:canReadAloud(m),replyToId:linkedText(m,current?.conversation||[])?.id||m.replyToId||'',delivery:m.delivery?.state==='delivered'?'Telegram receipt; phone reception unverified':'',media:(m.media||[]).map((a,index)=>({index:a.index??index,label:a.label||a.kind||'Attachment',available:live()&&!current?.saved&&a.downloadAvailable===true&&typeof(a.url||a.path)==='string'&&(a.url||a.path).startsWith('/v1/media?'),unavailableReason:a.unavailableReason||'No playable app link'}))})),
-      activity,work:operations.slice(-30).map(e=>({id:e.id,agent:e.agent,sessionId:e.sessionId,name:spec.name,text:observedWorkText(e),timestamp:e.timestamp,kind:e.kind,canPin:true,preview:executionPreview(e.observation),steps:taskProgress(e.observation)?.steps||[],detail:telegramDetail(e),revision:e.evidenceRevision||'',ownerDetail:!!ownerRef(e)})),
+      activity,work:operations.slice(-30).map(e=>({id:e.id,agent:e.agent,sessionId:e.sessionId,name:spec.name,text:observedWorkText(e),timestamp:e.timestamp,kind:e.kind,canPin:true,preview:executionPreview(e.observation),steps:taskProgress(e.observation)?.steps||[],detail:state.chat?telegramDetail(e):'',revision:e.evidenceRevision||'',ownerDetail:!!ownerRef(e)})),
       roster:SPECS.map(s=>({id:s.id,name:s.name,color:s.color,status:live()?label(state.agents.get(s.id)?.status):'Unobserved',preview:cards.get(s.id)?.preview.textContent||s.role})),
       pins:sessionId?local.pins(state.selected,sessionId).map(pin=>{const current=telegramFind(pin.messageId);return current?{...pin,text:current.text.slice(0,2000),title:workPreview(current).slice(0,160),sourceAvailable:true}:{...pin,sourceAvailable:false};}):[],pinHistory:sessionId?local.pinHistory(state.selected,sessionId):[],attachments:attachments().map(a=>({id:a.id,name:a.name,state:a.state})),
       outbox:local.data.outbox.filter(o=>o.agent===state.selected&&['pending','uncertain'].includes(o.state)).map(o=>({id:o.id,path:o.path,localSubmission:o.path==='/v1/message',sessionId:o.body.sessionId||'',priorSession:o.body.sessionId!==sessionId,text:'',state:o.state,note:(o.body.sessionId!==sessionId?'Earlier-session request · ':'')+(o.note||'Acceptance does not prove reading or completion'),retry:o.body.mode!=='steer'&&o.state==='uncertain'})),
@@ -602,7 +612,7 @@
     // Finish recording live in this retained composer, not its action dialog.
     telegramLegacy=true;$('chat-tools').hidden=false;
     let back=$('native-return');if(!back){back=button('Return to native chat',()=>{telegramLegacy=false;back.remove();telegramSchedule();},'secondary-button');back.id='native-return';$('conversation-screen').prepend(back);}
-    telegramPublish();requestAnimationFrame(()=>$('draft').scrollIntoView({block:'nearest'}));
+    renderChat();telegramPublish();requestAnimationFrame(()=>$('draft').scrollIntoView({block:'nearest'}));
   }
   function telegramFull(id,localSubmission=false){const m=localSubmission?telegramLocal(id):telegramFind(id);if(!m)return toast('This record is outside the current session window.');telegramLegacy=true;expandedMessages.add(id);const rows=conversationRows(),i=rows.findIndex(row=>row.id===id&&Boolean(row.localSubmission)===localSubmission);if(i>=0)messageOffsets.set(state.selected,Math.max(0,rows.length-i-25));renderSignature='';renderMessages();let back=$('native-return');if(!back){back=button('Return to native chat',()=>{telegramLegacy=false;back.remove();telegramSchedule();},'secondary-button');back.id='native-return';$('conversation-screen').prepend(back);}telegramPublish();requestAnimationFrame(()=>[...$('conversation-list').children].find(row=>row.dataset.messageId===id&&row.dataset.localSubmission===String(localSubmission))?.scrollIntoView({block:'center'}));}
   window.onDracoTelegramAction=event=>{
