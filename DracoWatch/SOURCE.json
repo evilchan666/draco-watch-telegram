@@ -1,19 +1,16 @@
 {
-  "watchSource": "6d15c4c9eb41d09e01a70817f16a32ca793f46d9",
+  "watchSource": "8d2791fb57e0ea585c6309267a2847be1ca4540e",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
-  "versionName": "0.4.0",
-  "versionCode": 24,
-  "integration": "Retained WebGL perspective Environment; actual RecyclerView timeline and Telegram SmoothScroller, existing Watch-native message/composer adapters",
+  "versionName": "0.4.1",
+  "versionCode": 25,
+  "integration": "S25 aspect-fitted six-station scene, bounded camera and compact touch controls; exact-session full observation reader; required idle repaint and rendered-pixel regression. Existing RecyclerView and Telegram SmoothScroller retained.",
   "loginMigration": false,
-  "updaterPublished": true,
+  "updaterPublished": false,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
-    "version": "0.3.4",
-    "versionCode": 23,
-    "sha256": "00ca402487641b5b4186e1fc0f7c451bd6a461e32cad5b452dba890f4aecfdc0"
+    "version": "0.4.0",
+    "versionCode": 24,
+    "sha256": "90fb945b36d14e3f8d6da1375a3a3fbf62833174bfc2507edd162e00eccea234"
   },
-  "releaseState": "0.4.0/code24 private updater and pinned download verified; physical installation/usability unverified",
-  "apkSha256": "90fb945b36d14e3f8d6da1375a3a3fbf62833174bfc2507edd162e00eccea234",
-  "apkBytes": 1511302,
-  "packagedForkSource": "0f006c8d529a202e7ee5e9fbf2981a6938d0bbf8"
+  "releaseState": "Integrated S25 correction; Android-tested unpaired, private paired package pending comparison and publication"
 }

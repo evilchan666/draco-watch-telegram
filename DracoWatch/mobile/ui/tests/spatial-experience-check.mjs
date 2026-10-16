@@ -8,6 +8,8 @@ import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url))),profile=fs.mkdtempSync(path.join(os.tmpdir(),'draco-environment-ui-'));
 const port=19329;
+const output=process.env.DRACO_SPATIAL_EVIDENCE_DIR||path.join(root,'../runtime/spatial-experience-latest');
+fs.mkdirSync(output,{recursive:true});
 const server=http.createServer((req,res)=>{const file=path.join(root,req.url==='/'?'index.html':req.url.split('?')[0]);if(!file.startsWith(root)||!fs.existsSync(file)){res.writeHead(404).end();return;}res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(fs.readFileSync(file));});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const chromium=spawn('/usr/bin/chromium',['--headless=new','--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader','--remote-debugging-port='+port,'--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
@@ -59,7 +61,32 @@ try{
   await evaluate('window.scrollTo(0,0)');
   const portrait=await evaluate("(()=>{const b=document.querySelector('.spatial-actions').getBoundingClientRect(),n=document.querySelector('.bottom-nav').getBoundingClientRect();return {bottom:b.bottom,nav:n.top}})()");
   check(portrait.bottom<=portrait.nav+1,'Portrait inspector actions fit above bottom navigation');
-  await call('Page.captureScreenshot',{format:'png'}).then(r=>fs.writeFileSync(path.join(root,'../runtime/spatial-040-20261016/portrait.png'),Buffer.from(r.data,'base64')));
+  await call('Page.captureScreenshot',{format:'png'}).then(r=>fs.writeFileSync(path.join(output,'portrait.png'),Buffer.from(r.data,'base64')));
+
+  // A backing-store resize clears WebGL pixels. Its one-shot repaint must not
+  // disappear behind the 30fps gate when no active actor schedules another RAF.
+  await evaluate(`(()=>{const quality=document.getElementById('rendering-mode');quality.value='light';quality.dispatchEvent(new Event('change'));const reduce=document.getElementById('reduce-motion');reduce.checked=true;reduce.dispatchEvent(new Event('change'));const snapshot=__snapshot();snapshot.agents=snapshot.agents.map(agent=>({...agent,status:'idle',telemetry:{...agent.telemetry,activeSessions:0}}));onDracoSnapshot(snapshot);})()`);
+  await wait('__environment.performance.draws>0&&!__environment.frame&&!__environment.dirty');
+  const scenePixels=async name=>{
+    const clip=await evaluate("(()=>{const r=__environment.canvas.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()");
+    const capture=await call('Page.captureScreenshot',{format:'png',clip});
+    fs.writeFileSync(path.join(output,name+'.png'),Buffer.from(capture.data,'base64'));
+    // Decode the compositor screenshot, not readPixels after a discarded WebGL
+    // buffer. HTML name overlays alone must never count as a rendered scene.
+    return evaluate(`(async()=>{const image=new Image();image.src='data:image/png;base64,${capture.data}';await image.decode();const canvas=document.createElement('canvas');canvas.width=image.width;canvas.height=image.height;const context=canvas.getContext('2d');context.drawImage(image,0,0);const pixels=context.getImageData(0,0,canvas.width,canvas.height).data;let visible=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i]+pixels[i+1]+pixels[i+2]>12)visible++;return {nonDarkFraction:visible/(pixels.length/4),glError:__environment.gl.getError(),contextLost:__environment.gl.isContextLost(),...__environment.diagnostics()};})()`);
+  };
+  const idleInitial=await scenePixels('idle-initial');
+  await evaluate("document.querySelector('.spatial-read').click();document.querySelector('.spatial-reader-head button').click()");
+  const idleReader=await scenePixels('idle-reader-close');
+  const idleResize=await evaluate(`new Promise(resolve=>{const e=__environment,start=e.performance.draws;e.requestDraw();const afterRepaint=()=>{if(e.performance.draws===start){requestAnimationFrame(afterRepaint);return;}const before=e.diagnostics(),height=e.canvas.height,stage=e.canvas.closest('#environment-stage');stage.style.height=(stage.getBoundingClientRect().height+4)+'px';e.resize();resolve({before,height,afterHeight:e.canvas.height});};requestAnimationFrame(afterRepaint);})`);
+  await new Promise(resolve=>setTimeout(resolve,120));
+  const idleAfterResize=await scenePixels('idle-after-resize');
+  check(idleInitial.targetFps===30&&!idleInitial.motion&&idleInitial.nonDarkFraction>.5&&idleReader.nonDarkFraction>.5,'Idle reduced-motion scene remains rendered at supported 30fps through reader close');
+  check(idleResize.height!==idleResize.afterHeight&&idleAfterResize.draws>idleResize.before.draws&&idleAfterResize.nonDarkFraction>.5&&idleAfterResize.glError===0&&!idleAfterResize.contextLost,'Near-frame idle backing-store resize repaints actual scene pixels without manual recovery');
+  await new Promise(resolve=>setTimeout(resolve,120));
+  const idleSettled=await evaluate('__environment.diagnostics()');
+  check(!idleSettled.pendingPaint&&!idleSettled.pendingFrame&&idleSettled.draws===idleAfterResize.draws,'Idle repaint settles with no pending paint or animation loop');
+  await evaluate("document.getElementById('environment-stage').style.height=''");
   await evaluate("DracoWatch.view('settings')");
   check(await evaluate('__environment.frame===0'),'Hidden scene cancels its only frame loop');
   await evaluate("DracoWatch.view('environment');__environment.stopFrame();onDracoSnapshot({...__snapshot(),connected:false});window.__frozen=JSON.stringify([...__environment.actors].map(([id,a],i)=>__environment.actorPosition(null,i,a)));__environment.advance(5)");
@@ -67,7 +94,7 @@ try{
   await call('Emulation.setDeviceMetricsOverride',{width:860,height:412,deviceScaleFactor:2,mobile:true});
   await evaluate("onDracoSnapshot(__snapshot());__environment.fitViewport()");
   await new Promise(r=>setTimeout(r,200));
-  await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true}).then(r=>fs.writeFileSync(path.join(root,'../runtime/spatial-040-20261016/landscape.png'),Buffer.from(r.data,'base64')));
+  await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:true}).then(r=>fs.writeFileSync(path.join(output,'landscape.png'),Buffer.from(r.data,'base64')));
   const bounds=await evaluate(`(()=>{const e=document.querySelector('.spatial-inspector'),b=e.getBoundingClientRect();return {right:b.right,width:innerWidth,body:document.body.scrollWidth}})()`);
   check(bounds.right<=bounds.width+1&&bounds.body<=bounds.width+1,'Inspection dock remains within landscape width');
   const ext=await evaluate("!!__environment.gl.getExtension('WEBGL_lose_context')");
@@ -82,6 +109,6 @@ try{
   await evaluate("DracoWatch.view('environment')");await wait('__environment.performance.draws>0');
   check(await evaluate("__environment.diagnostics().renderer==='canvas-perspective-fallback'&&Number.isFinite(__environment.point(null,0,0).x)"),'Unsupported WebGL gets an operable perspective fallback');
   check(errors.length===0,'No script exceptions in sustained camera/update/navigation flow');
-  fs.writeFileSync(path.join(root,'../runtime/spatial-040-20261016/browser-result.json'),JSON.stringify({checks,sustained,errors,bounds,portrait},null,2));
+  fs.writeFileSync(path.join(output,'browser-result.json'),JSON.stringify({checks,sustained,errors,bounds,portrait,idleInitial,idleReader,idleResize,idleAfterResize,idleSettled},null,2));
   console.log('PASS '+checks+' spatial experience checks; synthetic data, not handset performance');
 }finally{ws?.close();chromium.kill('SIGTERM');await new Promise(resolve=>server.close(resolve));await new Promise(resolve=>chromium.exitCode!==null?resolve():chromium.once('exit',resolve));fs.rmSync(profile,{recursive:true,force:true,maxRetries:5,retryDelay:100});}

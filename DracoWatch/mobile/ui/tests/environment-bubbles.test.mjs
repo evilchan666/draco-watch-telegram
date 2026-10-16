@@ -107,14 +107,16 @@ test('impossible body coverage is reported as a packing limit rather than attest
 // for compatibility; real 3D camera/context/layout is in spatial-experience-check.
 test('retained inspector is independent of moving geometry and preserves selected-session public text',()=>{
   class Element {
-    constructor(){this.hidden=false;this.dataset={};this.children=[];this.attributes=new Map();this.events=new Map();this.style={setProperty(){}};this.classList={toggle(){}};}
+    constructor(){this.hidden=false;this.dataset={};this.children=[];this.attributes=new Map();this.events=new Map();this.style={setProperty(){}};this.classList={toggle(){},contains(){return false;}};}
     append(...children){this.children.push(...children);}
     after(node){this.afterNode=node;}
     addEventListener(name,callback){this.events.set(name,callback);}
     setAttribute(key,value){this.attributes.set(key,value);}
+    showModal(){this.open=true;}
+    close(){this.open=false;}
     remove(){this.removed=true;}
   }
-  const doc={createElement:()=>new Element()};
+  const doc={createElement:()=>new Element(),body:new Element()};
   const {Bubbles}=helper({document:doc}),selected=[];
   const renderer={get width(){throw Error('Inspector must not sample moving scene geometry');}};
   const stage=new Element(),inspector=new Bubbles({stage,renderer,specs,select:id=>selected.push(id)});
@@ -123,12 +125,15 @@ test('retained inspector is independent of moving geometry and preserves selecte
   const textNode=inspector.text,layer=inspector.layer;
   assert.equal(layer.dataset.packing,'dock');assert.equal(layer.hidden,false);assert.equal(stage.afterNode,layer);
   assert.match(textNode.textContent,/Public report atlas/);
+  inspector.read.events.get('click')();assert.equal(inspector.reader.open,true);assert.equal(inspector.readerText.textContent,'Public report atlas');
   for(let i=0;i<25;i++){inspector.layout();inspector.update(messages,rows,{live:true,now:now+i,selected:'atlas'});}
   assert.equal(inspector.text,textNode);assert.equal(inspector.layer,layer);assert.match(textNode.textContent,/Public report atlas/);
-  inspector.update(messages,rows,{live:true,now,selected:'forge'});assert.equal(inspector.heading.textContent,'forge');assert.match(textNode.textContent,/Public report forge/);
+  inspector.update(messages,rows,{live:true,now,selected:'forge'});assert.equal(inspector.heading.textContent,'forge');assert.match(textNode.textContent,/Public report forge/);assert.equal(inspector.reader.open,false,'changing the selected identity closes the old observation');
+  inspector.read.events.get('click')();assert.equal(inspector.readerText.textContent,'Public report forge');
   layer.children.at(-1).children[0].events.get('click')();assert.deepEqual(selected,['forge']);
   rows.set('forge',{status:'active',sessionId:'replacement'});inspector.update(messages,rows,{live:true,now,selected:'forge'});
   assert.ok(!textNode.textContent.includes('Public report forge'),'replacement session cannot reuse old public speech');
+  assert.equal(inspector.reader.open,false);assert.ok(!inspector.readerText.textContent.includes('Public report forge'));
   inspector.show(false);assert.equal(layer.hidden,true);inspector.show(true);assert.equal(layer.hidden,false);
-  inspector.destroy();assert.equal(layer.removed,true);
+  inspector.destroy();assert.equal(layer.removed,true);assert.equal(inspector.reader.removed,true);
 });

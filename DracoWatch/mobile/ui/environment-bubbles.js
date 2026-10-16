@@ -161,31 +161,48 @@
       this.pin=document.createElement('p');this.pin.className='spatial-pin';this.operation=document.createElement('p');this.operation.className='spatial-operation';
       this.details=document.createElement('div');this.details.className='spatial-report-detail';this.details.append(this.label,this.text);
       const actions=document.createElement('div');actions.className='spatial-actions';
-      const button=(label,callback)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.addEventListener('click',callback);actions.append(b);return b;};
-      button('Conversation & pins',()=>this.select?.(this.selected));button('Work details',()=>this.work?.(this.selected));
+      const button=(label,callback,compact)=>{const b=document.createElement('button');b.type='button';b.setAttribute('aria-label',label);if(compact){const full=document.createElement('span'),short=document.createElement('span');full.className='spatial-action-full';full.textContent=label;short.className='spatial-action-short';short.textContent=compact;b.append(full,short);}else b.textContent=label;b.addEventListener('click',callback);actions.append(b);return b;};
+      button('Conversation & pins',()=>this.select?.(this.selected),'Chat & pins');button('Work details',()=>this.work?.(this.selected),'Work');
       const head=document.createElement('div');head.className='spatial-inspector-head';head.append(this.heading,this.status);
-      this.layer.append(head,this.operation,this.details,this.pin,actions);stage.after(this.layer);
+      this.read=document.createElement('button');this.read.type='button';this.read.className='spatial-read';this.read.textContent='Read';this.read.setAttribute('aria-label','Read full observation');this.read.setAttribute('aria-haspopup','dialog');this.read.setAttribute('aria-controls','spatial-observation-reader');this.read.addEventListener('click',()=>{this.refreshReader?.();this.reader.showModal();});head.append(this.read);
+      this.reader=document.createElement('dialog');this.reader.id='spatial-observation-reader';this.reader.className='spatial-observation-reader';this.reader.setAttribute('aria-labelledby','spatial-observation-heading');
+      const readerHead=document.createElement('div');readerHead.className='spatial-reader-head';this.readerHeading=document.createElement('h2');this.readerHeading.id='spatial-observation-heading';const close=document.createElement('button');close.type='button';close.textContent='Close';close.addEventListener('click',()=>this.reader.close());readerHead.append(this.readerHeading,close);
+      const readerBody=document.createElement('div');readerBody.className='spatial-reader-body';this.readerState=document.createElement('p');this.readerOperation=document.createElement('p');this.readerLabel=document.createElement('small');this.readerText=document.createElement('p');this.readerText.className='spatial-reader-report';this.readerPin=document.createElement('p');readerBody.append(this.readerState,this.readerOperation,this.readerLabel,this.readerText,this.readerPin);this.reader.append(readerHead,readerBody);document.body.append(this.reader);
+      const content=document.createElement('div');content.className='spatial-inspector-content';content.append(this.operation,this.details,this.pin);
+      this.layer.append(head,content,actions);stage.after(this.layer);
     }
     update(activity,agents,{live=false,selected,now=Date.now(),observation=null,pins=[]}={}) {
       this.selected=selected||this.selected;this.live=live===true;this.agents=agents;
+      const owner=this.selected+':'+(agents.get(this.selected)?.sessionId||'unknown');if(owner!==this.readerOwner&&this.reader.open)this.reader.close();this.readerOwner=owner;
       this.reports=this.expiry.apply(selectReports(activity,agents,{live:this.live,now,specs:this.specs}),{now});
       const report=this.reports.find(r=>r.id===this.selected),spec=this.specs.find(s=>s.id===this.selected);if(!spec)return;
       const set=(el,text)=>{if(el.textContent!==text)el.textContent=text;};
       this.layer.style.setProperty('--agent',spec.color);set(this.heading,spec.name);
       set(this.status,observation?.execution||stateLabel(this.live?agents.get(this.selected)?.status:'unknown'));
-      const age=observation?.ageMs;set(this.operation,(observation?.summary||'Select Work details for recorded operations. Run occupancy is not proof of execution.')+(Number.isFinite(age)?' · observed '+Math.floor(age/1000)+'s ago':''));
+      const age=observation?.ageMs,summary=observation?.summary||'Recorded operations are available in Work details.';
+      // Keep the compact phone surface useful, not a wall of occupancy caveats.
+      // Full observation wording remains available to accessibility and Work details.
+      set(this.operation,summary.startsWith('No open run in this conversation')?'No open run in this conversation.':summary);
+      this.operation.title=summary+(Number.isFinite(age)?' · observed '+Math.floor(age/1000)+'s ago':'');
       // Offline keeps no live speech claim. Idle expiry removes only the preview,
       // never the selected identity, chat, pins, or recorded work access.
       const hidden=!report||report.hidden||!this.live;
       set(this.label,hidden?this.live?'Public preview expired · conversation retained':'Observation unavailable · conversation retained':report.label);
       set(this.text,hidden?'Open the conversation for retained reports.':report.preview);
+      this.details.hidden=hidden||report.kind==='state';
       this.layer.dataset.messageId=hidden?'':report.sourceId||'';
       const pin=pins.at(-1);set(this.pin,pin?'Pinned · '+preview(pin.text||pin.title||'Saved item'):'');this.pin.hidden=!pin;
+      this.refreshReader=()=>{
+        set(this.readerHeading,spec.name+' · observation');set(this.readerState,this.status.textContent);set(this.readerOperation,this.operation.title);
+        const previewOff=document.body.classList.contains('spatial-reports-off');set(this.readerLabel,previewOff?'Public preview off · conversation retained':this.label.textContent);
+        set(this.readerText,hidden||previewOff?'Open the conversation for retained reports.':report.fullText||report.preview);this.readerText.hidden=!hidden&&!previewOff&&report.kind==='state';
+        set(this.readerPin,pin?'Pinned · '+(pin.text||pin.title||'Saved item'):'');this.readerPin.hidden=!pin;
+      };this.refreshReader();
     }
-    show(active){this.active=active===true;this.layer.hidden=!this.active;}
+    show(active){this.active=active===true;this.layer.hidden=!this.active;if(!this.active&&this.reader.open)this.reader.close();}
     // Kept as a no-op compatibility hook: no RAF layout/packing measurements.
     layout(){}
-    destroy(){this.layer.remove();}
+    destroy(){this.layer.remove();this.reader.remove();}
   }
   window.DracoEnvironmentBubbles={Bubbles,IdleExpiry,IDLE_EXPIRY_MS,selectReports,layoutBubbles,projectActors,resolveFontScale,previewText};
 })();

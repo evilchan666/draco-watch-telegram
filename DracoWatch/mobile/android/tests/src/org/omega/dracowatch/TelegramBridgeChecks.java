@@ -95,7 +95,8 @@ public final class TelegramBridgeChecks extends Instrumentation {
     }
     private void waitRows(String expected) throws Exception {
         for (int i = 0; i < 100; i++) { if (rowsText().contains(expected)) return; SystemClock.sleep(100); }
-        throw new AssertionError("Actual native rows did not receive expected text: " + expected);
+        String evidence = js("JSON.stringify({connection:document.getElementById('connection-label')?.textContent,fixture:window.bridgeChecks?{calls:bridgeChecks.calls,connections:bridgeChecks.connections,renderCount:bridgeChecks.renderCount,lastRender:bridgeChecks.lastRender}:null})");
+        throw new AssertionError("Actual native rows did not receive expected text: " + expected + "\nObserved rows: " + rowsText() + "\nSynthetic boundary diagnostics: " + evidence);
     }
     private View revealRowControl(String control) throws Exception {
         TimelineView list=(TimelineView)requireTag("telegram-timeline");
@@ -145,20 +146,25 @@ public final class TelegramBridgeChecks extends Instrumentation {
     private void installTestBoundary() throws Exception {
         // Preserve the genuine Java bridge render call. No network/input/media
         // method crosses the test boundary; every attempted operation is logged.
-        js("(()=>{const actual=window.DracoNative;window.bridgeChecks={renderCount:0,calls:[],actions:[],actualRender:typeof actual.renderTelegram==='function'};"
-            + "window.DracoNative={renderTelegram(value){bridgeChecks.renderCount++;actual.renderTelegram(value);},notifyTelegram(){},"
+        js("(()=>{const actual=window.DracoNative;window.bridgeChecks={renderCount:0,calls:[],actions:[],connections:[],lastRender:null,actualRender:typeof actual.renderTelegram==='function'};"
+            + "window.DracoNative={renderTelegram(value){bridgeChecks.renderCount++;bridgeChecks.lastRender=JSON.parse(value);actual.renderTelegram(value);},notifyTelegram(){},"
             + "refresh(agent){bridgeChecks.calls.push({method:'REFRESH',agent});},"
-            + "request(id,method,path,body){bridgeChecks.calls.push({method,path,body});setTimeout(()=>{const agent=new URL('https://fixture.invalid'+path).searchParams.get('agent');let data={agent,sessionId:'bridge-physical-'+agent,send:false,queue:false,steer:false,strictSteer:false,abort:false,reply:false,speech:false,attachments:false,commands:[]};if(method==='GET'&&bridgeChecks.ownerPath&&path===bridgeChecks.ownerPath+'&offset=0&limit=32768&revealCredentials=false'){const {url,revision,...identity}=bridgeChecks.ownerRef;data={schema:'draco.owner-work-detail.v1',identity,revision,text:bridgeChecks.ownerText,offset:0,nextOffset:null,totalChars:bridgeChecks.ownerText.length,complete:true,credentialMode:'masked',sourceTruncated:false};}onDracoResponse({id,ok:true,status:200,data});},0);},"
+            + "request(id,method,path,body){bridgeChecks.calls.push({method,path,body});setTimeout(()=>{const agent=new URL('https://fixture.invalid'+path).searchParams.get('agent');let data={agent,sessionId:'bridge-physical-'+agent,send:false,queue:false,steer:false,strictSteer:false,abort:false,reply:false,speech:false,attachments:false,commands:[]};if(method==='GET'&&path.startsWith('/v1/history?agent=')){const source=bridgeFixture();data={agent,sessionId:'bridge-physical-'+agent,messages:source.conversation.filter(m=>m.agent===agent&&m.sessionId==='bridge-physical-'+agent),historyState:{status:'complete'},hasMore:false,total:source.conversation.length};if(bridgeChecks.historyWitness&&agent==='atlas')data.messages.push({id:'bridge-history-witness',agent,sessionId:'bridge-physical-'+agent,role:'assistant',publicAttested:true,source:'authenticated-native-history',text:'SYNTHETIC HISTORY PAGE WITNESS',timestamp:Date.now()-5000});}if(method==='GET'&&bridgeChecks.ownerPath&&path===bridgeChecks.ownerPath+'&offset=0&limit=32768&revealCredentials=false'){const {url,revision,...identity}=bridgeChecks.ownerRef;data={schema:'draco.owner-work-detail.v1',identity,revision,text:bridgeChecks.ownerText,offset:0,nextOffset:null,totalChars:bridgeChecks.ownerText.length,complete:true,credentialMode:'masked',sourceTruncated:false};}onDracoResponse({id,ok:true,status:200,data});},0);},"
             + "stopMedia(){bridgeChecks.calls.push({method:'STOP-MEDIA'});},playMedia(){bridgeChecks.calls.push({method:'PLAY-MEDIA'});},setPlaybackRate(){},hideKeyboard(){actual.hideKeyboard();},nativeDiagnostics(){return actual.nativeDiagnostics();},recordDiagnostic(value){actual.recordDiagnostic(value);}};"
-            + "const handler=window.onDracoTelegramAction;window.onDracoTelegramAction=event=>{bridgeChecks.actions.push(JSON.parse(JSON.stringify(event)));return handler(event);};"
+            + "const connectionHandler=window.onDracoConnection;window.onDracoConnection=info=>{bridgeChecks.connections.push(info);return connectionHandler(info);};const handler=window.onDracoTelegramAction;window.onDracoTelegramAction=event=>{bridgeChecks.actions.push(JSON.parse(JSON.stringify(event)));return handler(event);};"
             + "window.bridgeFixture=()=>{const ids=['main','forge','atlas','aera-new','vvv','daedalus'],now=Date.now(),message={id:" + JSONObject.quote(MESSAGE) + ",agent:'atlas',sessionId:'" + SESSION + "',role:'assistant',text:" + JSONObject.quote(PUBLIC_TEXT) + ",timestamp:now-1000,kind:'Public report',publicAttested:true,source:'authenticated-native-history',media:[]};"
             + "return {version:2,connected:true,lastSuccess:now,capturedAt:now,selectedAgent:'atlas',agents:ids.map(id=>({id,status:id==='atlas'?'active':'idle',sessionId:'bridge-physical-'+id,sessionKey:'bridge:'+id,capabilities:{send:false,queue:false,steer:false,abort:false},controlTargets:[]})),conversation:[message,{id:'bridge-private-denied',agent:'atlas',sessionId:'" + SESSION + "',role:'assistant',text:'PRIVATE MUST NEVER REACH NATIVE',timestamp:now,publicAttested:false,source:'private-peer'}],historyState:{status:'complete'},historyHasMore:false,fleetCoverage:ids.map(agent=>({agent,available:true,status:'recorded-window'})),fleetActivity:[message],workActivity:[]};};"
             + "onDracoSnapshot(bridgeFixture());DracoWatch.select('atlas');return true;})()");
         waitShowing(true); waitRows(PUBLIC_TEXT);
+        if (flag("spatialOnly")) {
+            js("(()=>{bridgeChecks.historyWitness=true;const x=bridgeFixture();x.historyHasMore=true;onDracoSnapshot(x);document.getElementById('older-history').click();})()");
+            waitRows("SYNTHETIC HISTORY PAGE WITNESS");
+            check(rowsText().contains(PUBLIC_TEXT) && !rowsText().contains("PRIVATE MUST NEVER"), "exact synthetic history response retains readable public body and excludes private rows through real JS/native projection");
+        }
     }
     private void assertBoundary(String label) throws Exception {
         jsCheck("bridgeChecks.actualRender&&bridgeChecks.renderCount>0", label + " uses real Java renderTelegram, not a substitute native renderer");
-        jsCheck("bridgeChecks.calls.every(c=>c.method==='REFRESH'||c.method==='STOP-MEDIA'||c.method==='GET'&&(c.path.startsWith('/v1/capabilities?')||c.path==='/v1/diagnostics'||bridgeChecks.ownerPath&&c.path===bridgeChecks.ownerPath+'&offset=0&limit=32768&revealCredentials=false')||c.method==='POST'&&c.path==='/v1/diagnostics'&&(()=>{const b=JSON.parse(c.body);return Array.isArray(b.events)&&b.events.length<=20&&b.events.every(e=>!('body'in e)&&!('token'in e)&&!('query'in e));})())", label + " performed only exact synthetic owner-detail/capability reads and metadata diagnostics, no message/control POST, audio playback or synthesis");
+        jsCheck("bridgeChecks.calls.every(c=>c.method==='REFRESH'||c.method==='STOP-MEDIA'||c.method==='GET'&&(c.path.startsWith('/v1/capabilities?')||['main','forge','atlas','aera-new','vvv','daedalus'].some(agent=>c.path==='/v1/history?agent='+agent||c.path==='/v1/history?agent='+agent+'&before=older')||c.path==='/v1/diagnostics'||bridgeChecks.ownerPath&&c.path===bridgeChecks.ownerPath+'&offset=0&limit=32768&revealCredentials=false')||c.method==='POST'&&c.path==='/v1/diagnostics'&&(()=>{const b=JSON.parse(c.body);return Array.isArray(b.events)&&b.events.length<=20&&b.events.every(e=>!('body'in e)&&!('token'in e)&&!('query'in e));})())", label + " performed only exact synthetic history/owner-detail/capability reads and metadata diagnostics, no message/control POST, audio playback or synthesis");
         check(field("profile").get(activity) == null, label + " remains unpaired with no production credentials");
     }
     private void screenshot(String name) throws Exception {
@@ -283,7 +289,25 @@ public final class TelegramBridgeChecks extends Instrumentation {
         jsCheck("bridgeChecks.calls.every(c=>c.method!=='POST'||c.path==='/v1/hold/release'||c.path==='/v1/diagnostics')&&!bridgeChecks.calls.some(c=>c.method==='PLAY-MEDIA')","only synthetic release and metadata posts; no work, media or source replay");
         check(field("profile").get(activity)==null,"workflow bridge remains unpaired");
     }
+    private void traceSpatialCanvas() throws Exception {
+        if (!flag("glTrace")) return;
+        // Optional diagnostic probe only; readPixels stalls never run in the
+        // normal visual regression or application renderer.
+        js("(()=>{const c=document.getElementById('environment-canvas'),g=c.getContext('webgl'),t=window.spatialGlTrace={draws:0,events:[],lastDraw:null};if(!g)return false;const add=e=>{t.events.push({...e,at:performance.now()});if(t.events.length>60)t.events.shift();};for(const key of ['width','height']){const d=Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype,key);Object.defineProperty(c,key,{get(){return d.get.call(this);},set(v){add({resize:key,from:d.get.call(this),to:v,draws:t.draws});d.set.call(this,v);}});}const draw=g.drawArrays.bind(g);g.drawArrays=(...a)=>{draw(...a);t.draws++;const pixels=new Uint8Array(4);g.readPixels(Math.floor(c.width*.33),Math.floor(c.height*.52),1,1,g.RGBA,g.UNSIGNED_BYTE,pixels);const e={draw:t.draws,count:a[2],pixel:Array.from(pixels),error:g.getError(),width:c.width,height:c.height,lost:g.isContextLost(),texture:!!g.getParameter(g.TEXTURE_BINDING_2D)};t.lastDraw={...e,at:performance.now()};add(e);};return true;})()");
+    }
+    private void spatialCanvasEvidence(String label) throws Exception {
+        android.util.Log.i("DracoTelegramBridge", "GL " + label + " " + js("JSON.stringify((()=>{const c=document.getElementById('environment-canvas'),g=c.getContext('webgl'),r=c.getBoundingClientRect();return {now:performance.now(),hidden:document.hidden,rect:{x:r.x,y:r.y,width:r.width,height:r.height},width:c.width,height:c.height,error:g?.getError(),lost:g?.isContextLost(),trace:window.spatialGlTrace?{draws:spatialGlTrace.draws,lastDraw:spatialGlTrace.lastDraw,events:spatialGlTrace.events.slice(-12)}:null};})())"));
+        waitForIdleSync();SystemClock.sleep(150);
+        Bitmap shot=getUiAutomation().takeScreenshot();if(shot==null)throw new AssertionError("GL screenshot unavailable");
+        JSONObject r=new JSONObject(js("(()=>{const r=document.getElementById('environment-canvas').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,viewport:innerWidth};})()"));
+        int[] origin=ui(()->{int[] a=new int[2];web.getLocationOnScreen(a);return a;});float scale=ui(()->web.getWidth())/(float)r.getDouble("viewport");
+        JSONArray pixels=new JSONArray();int max=0,nonblack=0;for(int row=1;row<=5;row++)for(int col=1;col<=5;col++){int x=Math.round(origin[0]+((float)r.getDouble("x")+(float)r.getDouble("width")*col/6)*scale),y=Math.round(origin[1]+((float)r.getDouble("y")+(float)r.getDouble("height")*row/6)*scale);int rgb=shot.getPixel(Math.max(0,Math.min(x,shot.getWidth()-1)),Math.max(0,Math.min(y,shot.getHeight()-1)));int total=((rgb>>16)&255)+((rgb>>8)&255)+(rgb&255);max=Math.max(max,total);if(total>=9)nonblack++;pixels.put(total);}
+        shot.recycle();check(nonblack>=20&&max>=40,"actual Android canvas remains presented after "+label+": nonblack="+nonblack+"/25 max="+max+" samples="+pixels);
+    }
     private void spatialCase() throws Exception {
+        // Fixture intentionally disables ambient motion. Selection/resize must
+        // repaint on its own, rather than rely on a continuously running actor.
+        traceSpatialCanvas();
         if(flag("portrait"))check(ui(()->web.getHeight()>web.getWidth()),"verified actual portrait WebView geometry");
         if(flag("landscape"))check(ui(()->web.getWidth()>web.getHeight()),"verified actual landscape WebView geometry");
         click(requireTag("telegram-nav-environment"));waitShowing(false);
@@ -291,7 +315,20 @@ public final class TelegramBridgeChecks extends Instrumentation {
         js("window.scrollTo(0,0);document.getElementById('debug-open').click()");
         waitJs("JSON.parse(document.getElementById('debug-content').textContent).local?.environment?.draws>0");
         js("window.spatialBefore=JSON.parse(document.getElementById('debug-content').textContent).local.environment;document.getElementById('debug-close').click()");
+        screenshot("spatial-overview");spatialCanvasEvidence("overview");
+        String spatialGeometry=js("JSON.stringify((()=>{const rect=selector=>{const e=document.querySelector(selector);if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,top:r.top,bottom:r.bottom,left:r.left,right:r.right,scrollHeight:e.scrollHeight,clientHeight:e.clientHeight};};return {viewport:{width:innerWidth,height:innerHeight,visualWidth:visualViewport?.width,visualHeight:visualViewport?.height,scrollY,font:getComputedStyle(document.documentElement).fontSize},nav:rect('.bottom-nav'),actions:rect('.spatial-actions'),inspector:rect('.spatial-inspector'),head:rect('.spatial-inspector-head'),content:rect('.spatial-inspector-content'),sidebar:rect('.spatial-sidebar'),stage:rect('.environment-stage'),caption:rect('.environment-caption'),stations:rect('.environment-stations'),view:rect('#view-environment'),sidebarRows:getComputedStyle(document.querySelector('.spatial-sidebar')).gridTemplateRows,viewRows:getComputedStyle(document.querySelector('#view-environment')).gridTemplateRows};})())");
         jsCheck("spatialBefore.renderer==='webgl-perspective'&&spatialBefore.meshBuilds===1","Android WebView initializes retained WebGL perspective ship, not flat Canvas2D");
+        jsCheck("(()=>{const nav=document.querySelector('.bottom-nav').getBoundingClientRect(),agents=[...document.querySelectorAll('.environment-agent')];return agents.length===6&&agents.every(e=>{const r=e.getBoundingClientRect();return r.width>=44&&r.height>=44&&r.left>=0&&r.right<=innerWidth&&r.bottom<=nav.top;});})()","all six agents have directly visible Android touch targets, no hidden horizontal carousel");
+        jsCheck("(()=>{const b=document.querySelector('.spatial-actions').getBoundingClientRect(),n=document.querySelector('.bottom-nav').getBoundingClientRect();return b.top>=0&&b.bottom<=n.top+1;})()","inspection actions are initially visible without scroll or navigation overlap: "+spatialGeometry);
+        jsCheck("spatialBefore.projectedBounds.left>=0&&spatialBefore.projectedBounds.top>=0&&spatialBefore.projectedBounds.right<=spatialBefore.width&&spatialBefore.projectedBounds.bottom<=spatialBefore.height&&spatialBefore.projectedBounds.labels===6","actual Android overview safely frames hull and creatures with all six named destinations retained");
+        jsCheck("(()=>{const visible=[...document.querySelectorAll('.spatial-label')].filter(e=>getComputedStyle(e).visibility!=='hidden');return innerWidth>650&&innerHeight<=390?visible.length===1&&visible[0].classList.contains('selected'):visible.length===6;})()","short landscape repeats only the selected world label; larger views keep six labels without hidden destinations");
+        jsCheck("document.getElementById('environment-camera-panel').hidden&&document.querySelector('.environment-toolbar').children.length===3","camera tools are disclosed deliberately, not a six-button scene rail");
+        js("window.spatialReaderSelected=document.querySelector('.spatial-inspector h3').textContent;document.querySelector('.spatial-read').click()");
+        waitJs("document.getElementById('spatial-observation-reader').open");
+        jsCheck("(()=>{const d=document.getElementById('spatial-observation-reader'),b=d.querySelector('.spatial-reader-body');return d.open&&b.getBoundingClientRect().height>=80&&b.textContent.includes("+JSONObject.quote(PUBLIC_TEXT)+");})()", "actual Android observation reader opens with readable body and the complete selected public report");
+        js("document.querySelector('.spatial-reader-head button').click()");
+        jsCheck("!document.getElementById('spatial-observation-reader').open&&document.querySelector('.spatial-inspector h3').textContent===spatialReaderSelected", "closing the Android observation reader preserves the selected agent");
+        screenshot("spatial-reader-closed");spatialCanvasEvidence("reader-closed");
         JSONObject rect=new JSONObject(js("(()=>{const r=document.getElementById('environment-canvas').getBoundingClientRect();return {x:r.x+r.width*.5,y:r.y+r.height*.35,w:innerWidth};})()"));
         int[] origin=ui(()->{int[] p=new int[2];web.getLocationOnScreen(p);return p;});
         float factor=ui(()->web.getWidth())/(float)rect.getDouble("w"),x=origin[0]+(float)rect.getDouble("x")*factor,y=origin[1]+(float)rect.getDouble("y")*factor;
@@ -303,11 +340,11 @@ public final class TelegramBridgeChecks extends Instrumentation {
         js("for(let i=0;i<25;i++)onDracoSnapshot(bridgeFixture())");SystemClock.sleep(500);
         js("document.getElementById('debug-open').click();window.spatialUpdates=JSON.parse(document.getElementById('debug-content').textContent).local.environment;document.getElementById('debug-close').click()");
         jsCheck("JSON.stringify(spatialUpdates.camera)===JSON.stringify(spatialAfter.camera)&&spatialUpdates.meshBuilds===1&&spatialUpdates.reportLayout==='dock'&&document.querySelectorAll('.environment-bubble').length===0","Android feed refresh preserves camera, static hull and one stable report dock");
-        screenshot("spatial-orbit");
-        js("document.querySelector('[data-agent=forge].environment-agent').click();document.querySelector('.spatial-actions').scrollIntoView({block:'center'})");
+        screenshot("spatial-orbit");spatialCanvasEvidence("orbit-updated");
+        js("document.querySelector('[data-agent=forge].environment-agent').click()");
         jsCheck("document.querySelector('.spatial-inspector h3').textContent==='FORGE'&&!document.body.classList.contains('chat-open')","Android station selection inspects without forced chat transition");
         jsCheck("(()=>{const b=document.querySelector('.spatial-actions').getBoundingClientRect(),n=document.querySelector('.bottom-nav').getBoundingClientRect();return b.bottom<=n.top+1&&b.left>=0&&b.right<=innerWidth;})()","inspection actions reachable above phone navigation without overlap");
-        screenshot("spatial-inspector");
+        screenshot("spatial-inspector");spatialCanvasEvidence("forge-selected");
         js("document.querySelector('.spatial-actions button').click()");waitShowing(true);
         check(ui(()->((TextView)requireTag("telegram-title")).getText().toString()).contains("FORGE"),"spatial inspector opens exact selected native conversation");
         assertBoundary("spatial Android bridge");
@@ -328,7 +365,10 @@ public final class TelegramBridgeChecks extends Instrumentation {
             originalCache = js("localStorage.getItem('" + CACHE + "')");
             js("localStorage.setItem('" + CACHE + "',JSON.stringify({drafts:{},pins:[],pinHistory:[],outbox:[],preferences:{scale:100,motion:true,rendering:'light',echoToTelegram:false,automaticSpeech:false,playbackRate:1}}));window.bridgeReloadSentinel=true");
             ui(() -> { web.reload(); return null; });
-            waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'");
+            // DOM completion precedes native onPageFinished's queued connection
+            // delivery. Observe the genuine fresh-page unpaired UI before the
+            // synthetic feed is injected; never swallow or retry that callback.
+            waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'&&document.getElementById('connection-label').textContent==='Not paired'");
             installTestBoundary();
             if (flag("spatialOnly")) {
                 spatialCase();result.putString("stream","Spatial Android bridge passed: "+checks+". Real WebGL/touch/nav; synthetic feed, no production input.\n");finish(0,result);return;
@@ -398,7 +438,7 @@ public final class TelegramBridgeChecks extends Instrumentation {
             assertLayout("100 percent app scale"); screenshot("integrated-pinned-chat"); assertBoundary("first-page bridge");
 
             js("window.bridgeReloadSentinel=true"); ui(() -> { web.reload(); return null; });
-            waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'");
+            waitJs("document.readyState==='complete'&&!!window.DracoWatch&&typeof window.bridgeReloadSentinel==='undefined'&&document.getElementById('connection-label').textContent==='Not paired'");
             installTestBoundary();
             check(ui(() -> ((EditText) requireTag("telegram-draft")).getText().toString()).equals(DRAFT), "actual page reload rehydrates native draft exactly from durable JS storage");
             check(ui(() -> requireTag("telegram-pinned-banner").getVisibility()) == View.VISIBLE, "actual page reload restores exact-session native pin banner");
