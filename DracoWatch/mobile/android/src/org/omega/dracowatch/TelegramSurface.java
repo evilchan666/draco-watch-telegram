@@ -815,6 +815,7 @@ public final class TelegramSurface extends FrameLayout {
             icon(microphone, recording ? "stop" : "microphone", recording ? WARNING : SECONDARY);
             microphone.setContentDescription(recording ? "Finish recording and attach voice message" : "Record voice message");
             input.setHint(capability("send") ? "Message" : "Draft · sending currently unavailable");
+            input.setContentDescription("Message draft for " + payload.optString("name", payload.optString("agent", "Agent")));
             for (int i = 0; i < navigation.size(); i++) {
                 boolean selected = VIEWS[i].equals(chat ? "chats" : viewName);
                 TextView tab = navigation.get(i);

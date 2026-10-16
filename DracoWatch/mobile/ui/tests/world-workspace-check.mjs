@@ -164,6 +164,11 @@ try{
   await evaluate("__action('reply',{id:'report:atlas:0'});__action('draft',{text:'Explicit isolated ATLAS submission'});__action('send',{text:'Explicit isolated ATLAS submission',mode:'send'})");
   await wait("__requests.some(request=>request.route==='/v1/message'&&request.body.text==='Explicit isolated ATLAS submission')");
   await check("(()=>{const request=__requests.filter(request=>request.route==='/v1/message').at(-1);return request.body.agent==='atlas'&&request.body.sessionId==='workspace:atlas'&&request.body.mode==='send'&&request.body.replyToId==='report:atlas:0'&&request.body.attachmentIds.includes('isolated-file-atlas')&&request.body.attachmentIds.includes('isolated-voice-atlas')&&request.body.echoToTelegram===false;})()",'Explicit Send preserves exact text, selected session, captured files, voice and reply through original outbox');
+  await wait('__lastRender.outbox.length===0');
+  await evaluate("__action('reply',{id:'report:atlas:0'});__action('draft',{text:'First awaiting acknowledgement'});__action('send',{text:'First awaiting acknowledgement',mode:'send'});__action('reply',{id:'report:atlas:1'});__action('draft',{text:'Next unsent draft'})");
+  await wait('__lastRender.outbox.length===0');
+  await check("__lastRender.replyId==='report:atlas:1'&&__lastRender.draft==='Next unsent draft'",'Late acceptance preserves subsequently chosen reply and unsent draft');
+  await evaluate("__action('replyClear',{id:'report:atlas:1'})");
   await select('forge');await nativeReady('forge');
   await evaluate("__action('draft',{text:'Explicit isolated FORGE queue'});__action('send',{text:'Explicit isolated FORGE queue',mode:'queue'})");
   await wait("__requests.some(request=>request.route==='/v1/message'&&request.body.mode==='queue')");
