@@ -669,3 +669,67 @@ body[data-view=environment] .environment-agent {
   .spatial-action-full { display: none; }
   .spatial-action-short { display: inline; }
 }
+
+/* The Environment is the operator's first-person space, not a dashboard tile. */
+body[data-view=environment]:not(.chat-open) { overflow: hidden; }
+body[data-view=environment]:not(.chat-open) .app-shell { padding: 0; min-height: 0; max-width: none; }
+body[data-view=environment]:not(.chat-open) .bottom-nav,
+body[data-view=environment]:not(.chat-open) .environment-caption,
+body[data-view=environment]:not(.chat-open) .environment-toolbar,
+body[data-view=environment]:not(.chat-open) .spatial-sidebar,
+body[data-view=environment]:not(.chat-open) .environment-note,
+body[data-view=environment]:not(.chat-open) .connection-notice { display: none !important; }
+body[data-view=environment] #view-environment {
+  position: fixed; inset: 0; z-index: 2; display: block !important;
+  height: 100dvh !important; width: 100vw; min-height: 0 !important; padding: 0 !important; margin: 0; overflow: hidden;
+}
+body[data-view=environment] .environment-stage {
+  position: absolute; inset: 0; display: block !important; width: 100%; height: 100% !important;
+  min-height: 0 !important; border: 0; border-radius: 0; background: #080c12;
+}
+body[data-view=environment] #environment-canvas { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; flex: none; cursor: crosshair; }
+body[data-view=environment] .spatial-labels { inset: 0; }
+body[data-view=environment] .spatial-label { font-size: 13px; letter-spacing: .01em; padding: 3px 6px; border-radius: 4px; background: #05090d66; }
+body[data-view=environment] .spatial-render-note { bottom: 144px; z-index: 5; background: #111d; padding: 10px; border-radius: 8px; }
+.world-hud { position: absolute; inset: 0; z-index: 3; pointer-events: none; color: #f1f5fa; }
+.world-hud button { pointer-events: auto; min-height: 44px; min-width: 44px; font: 600 .78rem/1.2 system-ui; border: 1px solid #b0c8dc55; border-radius: 12px; color: #edf3fb; background: #0a101bd9; padding: 10px 13px; box-shadow: 0 3px 16px #0004; }
+.world-top { position: absolute; top: max(12px,var(--world-safe-top,env(safe-area-inset-top))); left: max(12px,var(--world-safe-left,env(safe-area-inset-left))); right: max(12px,var(--world-safe-right,env(safe-area-inset-right))); display: flex; justify-content: space-between; gap: 8px; }
+.world-hud .world-menu-button { border-color: #ff263c80; color: #fff; letter-spacing: .06em; }
+.world-hud .world-connection { font-size: .62rem; font-weight: 500; max-width: 60%; }
+.world-connection[data-live=false] { border-color: #f2ad61; color: #ffd39f; }
+.world-connection[data-live=true] { color: #c5d5df; }
+.world-reticle { position: absolute; top: 50%; left: 50%; translate: -50% -50%; font: 300 22px monospace; color: #e1edf0b0; text-shadow: 0 1px 2px #000; }
+.world-target { position: absolute; top: calc(50% + 25px); left: 12px; right: 12px; text-align: center; font: 500 .68rem/1.3 system-ui; text-shadow: 0 1px 4px #000; }
+.world-walk { pointer-events: auto; touch-action: none; position: absolute; left: max(22px,var(--world-safe-left,env(safe-area-inset-left))); bottom: max(48px,calc(var(--world-safe-bottom,env(safe-area-inset-bottom)) + 28px)); width: 112px; height: 112px; border-radius: 50%; outline-offset: 5px; border: 1px solid #d0dfed66; background: #10182760; }
+.world-walk-ring { position: absolute; inset: 15px; border: 1px solid #d0dfed33; border-radius: 50%; }
+.world-walk-thumb { position: absolute; width: 44px; height: 44px; left: 34px; top: 34px; border: 1px solid #e1f1ffaa; border-radius: 50%; background: #c5d5e344; transform: translate(var(--walk-x,0px),var(--walk-y,0px)); }
+.world-walk small { position: absolute; top: calc(100% + 8px); left: 0; right: 0; text-align: center; font: 500 10px system-ui; letter-spacing: .18em; text-shadow: 0 1px 4px #000; }
+.world-interact { position: absolute; right: max(16px,var(--world-safe-right,env(safe-area-inset-right))); bottom: max(52px,calc(var(--world-safe-bottom,env(safe-area-inset-bottom)) + 32px)); display: grid; gap: 8px; width: min(47vw,220px); }
+.world-interact .world-talk { border-color: var(--agent,#00e8ed); background: #0b1725ed; }
+.world-interact .world-agents { font-size: .64rem; color: #d0dae4; }
+.world-hint { position: absolute; bottom: max(8px,var(--world-safe-bottom,env(safe-area-inset-bottom))); left: 12px; right: 12px; text-align: center; margin: 0; color: #d2dde4; font-size: .56rem; text-shadow: 0 1px 4px #000; }
+.world-local-body { position: absolute; bottom: -3%; left: 24%; right: 24%; height: 16%; opacity: .82; }
+.world-hand { position: absolute; bottom: 0; width: 26%; height: 70%; min-height: 44px; border: 1px solid #67747d; background: linear-gradient(95deg,#080f16,#273742 60%,#111b24); border-radius: 24px 25px 4px 5px; box-shadow: inset 0 7px 0 #07111b,inset 0 12px 0 #95414e; }
+.world-hand-left { left: 0; rotate: -26deg; transform-origin: bottom; }
+.world-hand-right { right: 0; rotate: 26deg; transform-origin: bottom; }
+.world-menu { max-width: 640px; width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 16px; border: 1px solid #4b5c70; border-radius: 16px; background: #0d131c; color: #eef4fa; overflow: auto; }
+.world-menu::backdrop { background: #0009; backdrop-filter: blur(3px); }
+.world-menu-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.world-menu h2 { font-size: 1rem; }.world-menu h3 { font-size: .8rem; margin: 16px 0 8px; }
+.world-menu-state { font-size: .72rem; color: #b6c7d6; line-height: 1.4; margin: 12px 0; }
+.world-menu button { min-height: 44px; padding: 9px; border: 1px solid #435163; border-radius: 9px; background: #172231; color: #edf4fa; font-size: .75rem; }
+.world-agent-list,.world-menu-actions,.world-menu-nav { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.world-agent-list .world-agent { border-left: 3px solid var(--agent); }.world-menu-nav { margin-top: 16px; }
+@media(max-height:420px) and (min-width:650px) {
+ .world-walk { width: 92px; height: 92px; bottom: max(34px,var(--world-safe-bottom,0px)); }.world-walk-thumb { left: 24px; top: 24px; }
+ .world-top { top: max(8px,var(--world-safe-top,0px)); }.world-interact { bottom: max(30px,var(--world-safe-bottom,0px)); width: min(28vw,220px); }.world-hint { bottom: max(5px,var(--world-safe-bottom,0px)); }
+ .world-local-body { left: 30%; right: 30%; height: 20%; }.world-menu { max-width: 720px; }
+}
+
+body[data-view=environment] .spatial-render-note:empty { display: none; }
+body[data-view=environment] .spatial-label:not(.selected) { visibility: visible; }
+
+/* The instruction stays in the movement pad accessible name; do not let an
+   enlarged decorative hint overlap either control. */
+body.world-large-text .world-hint { display: none; }
+.world-agent[aria-pressed=true] { outline: 2px solid var(--agent); outline-offset: -3px; }

@@ -57,6 +57,9 @@ public final class MonitorActivity extends Activity {
     private Runnable playbackTick;
     private String playbackState = "idle";
     private String lastInsetState = "";
+    private boolean worldRequested,worldImmersive,keyboardVisible;
+    private int savedSystemUiVisibility,savedBarsBehavior,savedVisibleBars,savedCutoutMode;
+    private boolean worldCutoutChanged;
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);diagnostics=new NativeDiagnostics(this);diagnostics.record("lifecycle","created");previousCrashHandler=Thread.getDefaultUncaughtExceptionHandler();crashHandler=NativeDiagnostics.crashForwarder(diagnostics::crash,previousCrashHandler);Thread.setDefaultUncaughtExceptionHandler(crashHandler);playbackRate=validRate(getSharedPreferences("draco-audio",MODE_PRIVATE).getFloat("rate",1f));if(state!=null&&state.getBoolean("pickerOpen")){String recipient=state.getString("pickerAgent");if(DracoClient.AGENTS.contains(recipient)){pickerAgent=recipient;pickerOpen=true;}}prunePlayback();mediaStore=new AttachmentStore(this);profile=DracoClient.loadProfile(this);updater=new UpdateController(this,workers,this::deliver);
@@ -69,11 +72,16 @@ public final class MonitorActivity extends Activity {
             if(Build.VERSION.SDK_INT>=30){android.graphics.Insets bars=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout());
                 android.graphics.Insets ime=insets.getInsets(WindowInsets.Type.ime());left=bars.left;top=bars.top;right=bars.right;bottom=Math.max(bars.bottom,ime.bottom);keyboard=insets.isVisible(WindowInsets.Type.ime());}
             else{left=insets.getSystemWindowInsetLeft();top=insets.getSystemWindowInsetTop();right=insets.getSystemWindowInsetRight();bottom=insets.getSystemWindowInsetBottom();}
+            boolean fullBleed=worldImmersive&&!keyboard;
             FrameLayout.LayoutParams params=(FrameLayout.LayoutParams)web.getLayoutParams();
-            if(params.leftMargin!=left||params.topMargin!=top||params.rightMargin!=right||params.bottomMargin!=bottom){params.setMargins(left,top,right,bottom);web.setLayoutParams(params);}
+            int webLeft=fullBleed?0:left,webTop=fullBleed?0:top,webRight=fullBleed?0:right,webBottom=fullBleed?0:bottom;
+            if(params.leftMargin!=webLeft||params.topMargin!=webTop||params.rightMargin!=webRight||params.bottomMargin!=webBottom){params.setMargins(webLeft,webTop,webRight,webBottom);web.setLayoutParams(params);}
             FrameLayout.LayoutParams nativeParams=(FrameLayout.LayoutParams)telegram.getLayoutParams();if(nativeParams.leftMargin!=left||nativeParams.topMargin!=top||nativeParams.rightMargin!=right||nativeParams.bottomMargin!=bottom){nativeParams.setMargins(left,top,right,bottom);telegram.setLayoutParams(nativeParams);}
-            JSONObject value=new JSONObject();try{value.put("keyboardVisible",keyboard);value.put("bottom",bottom/getResources().getDisplayMetrics().density);}catch(Exception ignored){}
-            String insetState=value.toString();if(!insetState.equals(lastInsetState)){lastInsetState=insetState;deliver("onDracoInsets",value);}return insets;});
+            JSONObject value=new JSONObject();try{float density=getResources().getDisplayMetrics().density;value.put("keyboardVisible",keyboard);value.put("bottom",bottom/density);
+                int safeLeft=left,safeTop=top,safeRight=right,safeBottom=bottom;if(Build.VERSION.SDK_INT>=30)safeBottom=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.displayCutout()).bottom;
+                else if(Build.VERSION.SDK_INT>=28){DisplayCutout cutout=insets.getDisplayCutout();if(cutout!=null){safeLeft=Math.max(safeLeft,cutout.getSafeInsetLeft());safeTop=Math.max(safeTop,cutout.getSafeInsetTop());safeRight=Math.max(safeRight,cutout.getSafeInsetRight());safeBottom=Math.max(safeBottom,cutout.getSafeInsetBottom());}}
+                value.put("worldSafe",new JSONObject().put("left",safeLeft/density).put("top",safeTop/density).put("right",safeRight/density).put("bottom",safeBottom/density));}catch(Exception ignored){}
+            keyboardVisible=keyboard;updateWorldImmersive();String insetState=value.toString();if(!insetState.equals(lastInsetState)){lastInsetState=insetState;deliver("onDracoInsets",value);}return insets;});
         setContentView(surface);surface.requestApplyInsets();
         WebSettings settings=web.getSettings();settings.setJavaScriptEnabled(true);settings.setDomStorageEnabled(true);
         settings.setAllowFileAccess(false);settings.setAllowContentAccess(false);settings.setAllowFileAccessFromFileURLs(false);settings.setAllowUniversalAccessFromFileURLs(false);
@@ -109,7 +117,7 @@ public final class MonitorActivity extends Activity {
     private final class Bridge {
         @JavascriptInterface public void renderTelegram(String json){
             if(json==null||json.length()>3000000)return;
-            try{JSONObject payload=new JSONObject(json);main.post(()->{if(!destroyed&&telegram!=null)telegram.render(payload);});}catch(JSONException ignored){}
+            try{JSONObject payload=new JSONObject(json);main.post(()->{if(!destroyed&&telegram!=null){telegram.render(payload);worldRequested=worldMode(payload);updateWorldImmersive();}});}catch(JSONException ignored){}
         }
         @JavascriptInterface public void notifyTelegram(String text){main.post(()->{if(telegram!=null&&telegram.showing()&&text!=null&&text.length()<=2000)Toast.makeText(MonitorActivity.this,text,Toast.LENGTH_LONG).show();});}
 
@@ -156,11 +164,16 @@ public final class MonitorActivity extends Activity {
         getSharedPreferences("phone",MODE_PRIVATE).edit().putString("agent",agent).apply();
         if(profile==null){connection("unpaired","Pair this phone with your DRACO client.");return;}if(!refreshing.compareAndSet(false,true))return;
         DracoClient.Profile selected=profile;long revision=pairingRevision;readLane("/v1/snapshot?agent="+agent).execute(()->{
+            long started=SystemClock.elapsedRealtime();int status=0;String correlationId=null;recordSnapshot("start",0,0,null,null);
             try{DracoClient.Response response=DracoClient.request(selected,"GET","/v1/snapshot?agent="+agent,null,null);
-                if(response.status!=200)throw new DracoClient.Failure(response.status==401?"Phone pairing rejected.":"Live connection unavailable.",response.status,false);
+                status=response.status;correlationId=response.correlationId;
+                if(response.status!=200)throw new DracoClient.Failure(response.status==401?"Phone pairing rejected.":"Live connection unavailable.",response.status,false,correlationId);
                 if(!response.data.has("agents")||!agent.equals(response.data.optString("selectedAgent")))throw new IOException();
+                recordSnapshot("success",SystemClock.elapsedRealtime()-started,status,correlationId,null);
                 if(active&&revision==pairingRevision&&agent.equals(latestAgent))deliver("onDracoSnapshot",response.data);
-            }catch(Exception ex){if(active&&revision==pairingRevision&&agent.equals(latestAgent))connection("offline",ex instanceof DracoClient.Failure?ex.getMessage():"Live connection unavailable.");}
+            }catch(Exception ex){DracoClient.Failure failure=ex instanceof DracoClient.Failure?(DracoClient.Failure)ex:null;
+                JSONObject metadata=recordSnapshot("failure",SystemClock.elapsedRealtime()-started,failure==null?status:failure.status,failure==null?correlationId:failure.correlationId,ex);
+                if(active&&revision==pairingRevision&&agent.equals(latestAgent))connection("offline",failure==null?"Live connection unavailable.":failure.getMessage(),metadata);}
             finally{refreshing.set(false);if(active&&(!agent.equals(latestAgent)||revision!=pairingRevision))main.post(()->refresh(latestAgent));}});
     }
     private void requestJson(String id,String method,String path,String json,boolean bulk){
@@ -183,7 +196,15 @@ public final class MonitorActivity extends Activity {
     private void responseError(String id,String error,boolean uncertain){responseError(id,error,uncertain,0,null);}
     private void responseError(String id,String error,boolean uncertain,int status,String correlationId){JSONObject value=new JSONObject();try{value.put("id",id);value.put("ok",false);value.put("status",status);if(correlationId!=null)value.put("correlationId",correlationId);value.put("error",error);value.put("unconfirmed",uncertain);value.put("uncertain",uncertain);}catch(Exception ignored){}recordResponse(id,status,correlationId);deliver("onDracoResponse",value);}
     private void recordResponse(String id,int status,String correlationId){if(diagnostics==null)return;JSONObject value=new JSONObject();try{value.put("component","transport");value.put("event","response");value.put("requestId",id);value.put("status",status);if(correlationId!=null)value.put("correlationId",correlationId);}catch(Exception ignored){}diagnostics.record(value);}
-    private void connection(String state,String message){JSONObject value=new JSONObject();try{value.put("state",state);value.put("message",message);}catch(Exception ignored){}deliver("onDracoConnection",value);}
+    static JSONObject snapshotMetadata(String phase,long durationMs,int status,String correlationId,Throwable failure){JSONObject value=new JSONObject();try{
+        value.put("component","transport");value.put("event","snapshot");value.put("phase",Arrays.asList("start","success","failure").contains(phase)?phase:"failure");
+        value.put("durationMs",Math.max(0,Math.min(9007199254740991L,durationMs)));value.put("status",status>=0&&status<=599?status:0);
+        String correlation=DracoClient.safeCorrelation(correlationId);if(correlation!=null)value.put("correlationId",correlation);
+        if(failure!=null)value.put("errorName",DracoClient.safeErrorName(failure));
+        }catch(Exception ignored){}return value;}
+    private JSONObject recordSnapshot(String phase,long durationMs,int status,String correlationId,Throwable failure){JSONObject value=snapshotMetadata(phase,durationMs,status,correlationId,failure);if(diagnostics!=null)try{diagnostics.record(value);}catch(Exception ignored){}return value;}
+    private void connection(String state,String message){connection(state,message,null);}
+    private void connection(String state,String message,JSONObject metadata){JSONObject value=new JSONObject();try{value.put("state",state);value.put("message",message);if(metadata!=null)for(String key:new String[]{"phase","status","durationMs","errorName","correlationId"})if(metadata.has(key))value.put(key,metadata.get(key));}catch(Exception ignored){}deliver("onDracoConnection",value);}
     void deliver(String callback,JSONObject value){String progressKey=null;if("onDracoTransfer".equals(callback))progressKey=callback+":"+value.optString("id")+":"+value.optString("state");else if("onDracoUpdate".equals(callback)&&"downloading".equals(value.optString("state")))progressKey=callback+":"+value.optInt("versionCode")+":downloading";
         if(!callbacks.shouldEmit(progressKey,SystemClock.elapsedRealtime(),value.optLong("bytes"),value.optLong("total")))return;
         String supersedes=null;if("onDracoResponse".equals(callback)||"onDracoPlayback".equals(callback))supersedes="onDracoTransfer:"+value.optString("id")+":";else if("onDracoUpdate".equals(callback)&&progressKey==null)supersedes="onDracoUpdate:"+value.optInt("versionCode")+":";
@@ -191,6 +212,32 @@ public final class MonitorActivity extends Activity {
     private void dispatch(NativeCallbacks.Event event){web.evaluateJavascript(event.script,null);}
     private void drainCallbacks(){if(!loaded||!active||destroyed)return;NativeCallbacks.Event event;while((event=callbacks.poll())!=null)dispatch(event);}
     private void lifecycle(boolean value){if(loaded&&!destroyed)web.evaluateJavascript("if(typeof window.onDracoLifecycle==='function')window.onDracoLifecycle({active:"+value+"});",null);}
+    // The optional explicit flag lets HTML dialogs leave immersive mode too.
+    // Never infer a world from a missing/malformed native-surface payload.
+    static boolean worldMode(JSONObject payload){return payload!=null&&Boolean.FALSE.equals(payload.opt("chat"))&&"environment".equals(payload.optString("view"))&&Boolean.FALSE.equals(payload.opt("visible"))&&(!payload.has("world")||Boolean.TRUE.equals(payload.opt("world")));}
+    private void updateWorldImmersive(){setWorldImmersive(worldRequested&&active&&!destroyed&&hasWindowFocus()&&!keyboardVisible);}
+    private void setWorldImmersive(boolean immersive){
+        if(worldImmersive==immersive)return;Window window=getWindow();if(window==null)return;View decor=window.getDecorView();
+        WindowInsetsController controller=Build.VERSION.SDK_INT>=30?window.getInsetsController():null;if(Build.VERSION.SDK_INT>=30&&controller==null)return;
+        worldImmersive=immersive;
+        if(Build.VERSION.SDK_INT>=30){
+            int bars=WindowInsets.Type.statusBars()|WindowInsets.Type.navigationBars();
+            if(immersive){WindowInsets insets=decor.getRootWindowInsets();savedVisibleBars=0;
+                if(insets==null||insets.isVisible(WindowInsets.Type.statusBars()))savedVisibleBars|=WindowInsets.Type.statusBars();
+                if(insets==null||insets.isVisible(WindowInsets.Type.navigationBars()))savedVisibleBars|=WindowInsets.Type.navigationBars();
+                savedBarsBehavior=controller.getSystemBarsBehavior();controller.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);controller.hide(bars);
+            }else{controller.setSystemBarsBehavior(savedBarsBehavior);controller.show(savedVisibleBars);controller.hide(bars&~savedVisibleBars);}
+        }else{if(immersive){savedSystemUiVisibility=decor.getSystemUiVisibility();decor.setSystemUiVisibility(savedSystemUiVisibility|View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);}
+            else decor.setSystemUiVisibility(savedSystemUiVisibility);}
+        if(Build.VERSION.SDK_INT>=28){WindowManager.LayoutParams attrs=window.getAttributes();if(immersive){savedCutoutMode=attrs.layoutInDisplayCutoutMode;
+                worldCutoutChanged=savedCutoutMode!=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES&&(Build.VERSION.SDK_INT<30||savedCutoutMode!=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS);
+                if(worldCutoutChanged){attrs.layoutInDisplayCutoutMode=WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;window.setAttributes(attrs);}
+            }else if(worldCutoutChanged){attrs.layoutInDisplayCutoutMode=savedCutoutMode;window.setAttributes(attrs);worldCutoutChanged=false;}}
+        // Only the world's WebView is full bleed. Raw safe insets are delivered
+        // separately for its interactive HUD; native chat/IME retain margins.
+        decor.requestApplyInsets();
+    }
+    @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);updateWorldImmersive();}
 
     private void pickAttachment(String agent){if(!active||transferring||recorder!=null||pickerOpen||!DracoClient.AGENTS.contains(agent))return;pickerAgent=agent;pickerOpen=true;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.setType("*/*");intent.addCategory(Intent.CATEGORY_OPENABLE);intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);startActivityForResult(intent,PICK);}
     private void importUri(Uri uri,String agent){if(uri==null||transferring||!DracoClient.AGENTS.contains(agent))return;attachmentEvent(agent,"importing",null,null,0,0,null,null);
@@ -293,9 +340,9 @@ public final class MonitorActivity extends Activity {
         dialog.setOnShowListener(ignored->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view->{try{JSONObject raw=DracoClient.decodePairing(code.getText().toString());DracoClient.Profile next=new DracoClient.Profile(raw);getSharedPreferences("pairing",MODE_PRIVATE).edit().putString("profile",raw.toString()).commit();profile=next;pairingRevision++;code.setText("");dialog.dismiss();connection("connecting","Connecting to your private client.");refresh(latestAgent);}catch(Exception ex){code.setError("That private pairing code is invalid.");}}));dialog.show();}
     DracoClient.Profile currentProfile(){return profile;}
     void requestUnknownSources(){resumeInstall=false;startActivityForResult(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,Uri.parse("package:"+getPackageName())),UNKNOWN_SOURCES);}
-    @Override protected void onResume(){super.onResume();active=true;if(web!=null){web.onResume();web.resumeTimers();lifecycle(true);drainCallbacks();}resumeMicrophoneStart();if(resumeInstall){resumeInstall=false;updater.install();}else if(loaded){refresh(latestAgent);updater.check(false);}}
-    @Override protected void onPause(){active=false;localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(diagnostics!=null)diagnostics.record("lifecycle","paused");finishRecording(false);stopPlayback();lifecycle(false);if(web!=null){web.onPause();web.pauseTimers();}super.onPause();}
-    @Override protected void onDestroy(){destroyed=true;active=false;localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(Thread.getDefaultUncaughtExceptionHandler()==crashHandler)Thread.setDefaultUncaughtExceptionHandler(previousCrashHandler);microphonePermissionPending=false;pendingMicrophoneStart=false;updater.close();finishRecording(true);stopPlayback();workers.shutdownNow();interactiveWorkers.shutdownNow();readWorkers.shutdownNow();observationWorkers.shutdownNow();if(web!=null){web.removeJavascriptInterface("DracoNative");web.destroy();}super.onDestroy();}
+    @Override protected void onResume(){super.onResume();active=true;updateWorldImmersive();if(web!=null){web.onResume();web.resumeTimers();lifecycle(true);drainCallbacks();}resumeMicrophoneStart();if(resumeInstall){resumeInstall=false;updater.install();}else if(loaded){refresh(latestAgent);updater.check(false);}}
+    @Override protected void onPause(){active=false;updateWorldImmersive();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(diagnostics!=null)diagnostics.record("lifecycle","paused");finishRecording(false);stopPlayback();lifecycle(false);if(web!=null){web.onPause();web.pauseTimers();}super.onPause();}
+    @Override protected void onDestroy(){destroyed=true;active=false;worldRequested=false;updateWorldImmersive();localWebInspection=false;WebView.setWebContentsDebuggingEnabled(false);if(Thread.getDefaultUncaughtExceptionHandler()==crashHandler)Thread.setDefaultUncaughtExceptionHandler(previousCrashHandler);microphonePermissionPending=false;pendingMicrophoneStart=false;updater.close();finishRecording(true);stopPlayback();workers.shutdownNow();interactiveWorkers.shutdownNow();readWorkers.shutdownNow();observationWorkers.shutdownNow();if(web!=null){web.removeJavascriptInterface("DracoNative");web.destroy();}super.onDestroy();}
     @Override public void onConfigurationChanged(Configuration configuration){super.onConfigurationChanged(configuration);if(web!=null){web.getSettings().setTextZoom(systemTextZoom());appInfo();}}
     @Override public void onBackPressed(){if(recorder!=null){finishRecording(false);return;}if(telegram!=null&&telegram.showing()&&telegram.back())return;if(web!=null){web.evaluateJavascript("Boolean(window.DracoWatch&&typeof window.DracoWatch.back==='function'&&window.DracoWatch.back())",value->{if(!"true".equals(value))finish();});return;}super.onBackPressed();}
 }

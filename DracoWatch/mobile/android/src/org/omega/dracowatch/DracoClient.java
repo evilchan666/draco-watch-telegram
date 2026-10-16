@@ -29,11 +29,19 @@ final class DracoClient {
         Response(int status, JSONObject data, String correlationId) { this.status=status; this.data=data; this.correlationId=safeCorrelation(correlationId); }
     }
     static final class Failure extends IOException {
-        final boolean uncertain; final int status; final String correlationId;
+        final boolean uncertain; final int status; final String correlationId,errorName;
         Failure(String message, int status, boolean uncertain) { this(message,status,uncertain,null); }
-        Failure(String message, int status, boolean uncertain,String correlationId) { super(message); this.status=status; this.uncertain=uncertain;this.correlationId=safeCorrelation(correlationId); }
+        Failure(String message, int status, boolean uncertain,String correlationId) { this(message,status,uncertain,correlationId,null); }
+        Failure(String message, int status, boolean uncertain,String correlationId,Throwable failure) { super(message); this.status=status; this.uncertain=uncertain;this.correlationId=safeCorrelation(correlationId);this.errorName=failure==null?"Failure":safeErrorName(failure); }
     }
     static String safeCorrelation(String value){return value!=null&&value.matches("[A-Za-z0-9_.:-]{1,200}")?value:null;}
+    // Only the bounded class name survives transport wrapping, never exception
+    // messages, causes, URLs, certificate details or submitted content.
+    static String safeErrorName(Throwable failure){
+        if(failure instanceof Failure)return ((Failure)failure).errorName;
+        String value=failure==null?"TransportError":failure.getClass().getSimpleName();
+        return value.matches("[A-Za-z][A-Za-z0-9_]{0,63}")?value:"TransportError";
+    }
     static final class Profile {
         final List<String> origins = new ArrayList<>(); final String token; final SSLContext tls;
         private volatile String healthyOrigin;
@@ -139,11 +147,11 @@ final class DracoClient {
                 if(status>=200&&status<300)profile.connected(origin);
                 return new Response(status,value,correlationId);
             }catch(Failure failure){throw failure;}catch(Exception failure){
-                if(httpStatus>0)throw new Failure("Invalid server response.",httpStatus,write&&admitted,correlationId);
-                if(write&&admitted)throw new Failure("Delivery is unconfirmed. Check this conversation before retrying.",0,true,correlationId);
+                if(httpStatus>0)throw new Failure("Invalid server response.",httpStatus,write&&admitted,correlationId,failure);
+                if(write&&admitted)throw new Failure("Delivery is unconfirmed. Check this conversation before retrying.",0,true,correlationId,failure);
                 last=failure;
             }finally{if(connection!=null)connection.disconnect();}}
-        throw new Failure("Connection unavailable. Check Wi-Fi or Tailscale.",0,false);
+        throw new Failure("Connection unavailable. Check Wi-Fi or Tailscale.",0,false,null,last);
     }
     static long download(Profile profile,String path,File destination,int cap,long expectedBytes,Progress progress)throws Exception{
         return download(profile,path,destination,cap,expectedBytes,progress,null);

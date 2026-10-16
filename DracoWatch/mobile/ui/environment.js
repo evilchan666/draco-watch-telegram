@@ -1,5 +1,5 @@
-/* Retained, perspective ship interior. Occupancy animates an illustration, never
- * a claim of physical travel or productive execution. No transport or controls. */
+/* First-person local operating room. Player movement is local navigation only;
+ * observed occupancy is never a claim of productive execution. No transport. */
 'use strict';
 (() => {
   const {ellipse}=window.DracoChamber;
@@ -13,14 +13,16 @@
   const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
   const norm=a=>{const l=Math.hypot(...a)||1;return a.map(v=>v/l);};
   function multiply(a,b){const out=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)for(let k=0;k<4;k++)out[c*4+r]+=a[k*4+r]*b[c*4+k];return out;}
-  function cameraMatrix(eye,target,aspect){
-    const z=norm(sub(eye,target)),x=norm(cross([0,1,0],z)),y=cross(z,x),f=1/Math.tan(.42),near=.1,far=180;
+  function cameraMatrix(eye,target,aspect,fov=1.22){
+    const z=norm(sub(eye,target)),x=norm(cross([0,1,0],z)),y=cross(z,x),f=1/Math.tan(fov/2),near=.06,far=80;
     const view=new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1]);
     return {matrix:multiply(new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0]),view),right:x,up:y};
   }
   const color=(hex,shade=1,alpha=1)=>{const n=parseInt(hex.slice(1,7),16);return [((n>>16)&255)/255*shade,((n>>8)&255)/255*shade,(n&255)/255*shade,alpha];};
-  const STATIONS=SPECS.map((spec,i)=>({spec,x:(i%2?1:-1)*2.15,z:-2.85+Math.floor(i/2)*2.85}));
-  const ACTOR_HEIGHT=1.82,ACTOR_WIDTH=1.9;
+  const ROOM={halfWidth:7,halfDepth:10,height:4.8};
+  const STATIONS=SPECS.map((spec,i)=>({spec,x:(i%2?1:-1)*4.4,z:-5+Math.floor(i/2)*5}));
+  const ACTOR_HEIGHT=1.82,ACTOR_WIDTH=1.9,PLAYER_RADIUS=.32,EYE_HEIGHT=1.65,WALK_SPEED=2.2;
+  const SPAWN={x:0,z:3,yaw:-.9724,pitch:0};
   class Mesh {
     constructor(){this.data=[];this.faces=[];}
     tri(a,b,c,rgba,lit=true){
@@ -28,7 +30,7 @@
       const tint=rgba.map((v,i)=>i<3?v*light:v);for(const p of [a,b,c])this.data.push(...p,...tint,0,0);this.faces.push({p:[a,b,c],c:tint});
     }
     quad(a,b,c,d,rgba,lit=true){this.tri(a,b,c,rgba,lit);this.tri(a,c,d,rgba,lit);}
-    box(x,y,z,w,h,d,hex){this.platform(x,y,z,w,h,d,Math.min(.06,w*.2,d*.2),hex);}
+    box(x,y,z,w,h,d,hex){const a=x-w/2,b=x+w/2,c=z-d/2,e=z+d/2,t=y+h,tint=color(hex);this.quad([a,y,c],[b,y,c],[b,t,c],[a,t,c],tint);this.quad([b,y,e],[a,y,e],[a,t,e],[b,t,e],tint);this.quad([a,y,e],[a,y,c],[a,t,c],[a,t,e],tint);this.quad([b,y,c],[b,y,e],[b,t,e],[b,t,c],tint);this.quad([a,t,c],[b,t,c],[b,t,e],[a,t,e],tint);this.quad([a,y,e],[b,y,e],[b,y,c],[a,y,c],tint);}
     platform(x,y,z,w,h,d,r,hex){
       // Retained beveled geometry, with rounded plan corners and a small shoulder.
       const path=[];for(let corner=0;corner<4;corner++){const a=-Math.PI+corner*Math.PI/2,cx=x+(corner===0||corner===3?-1:1)*(w/2-r),cz=z+(corner<2?-1:1)*(d/2-r);for(let j=0;j<=5;j++){const t=a+j*Math.PI/10;path.push([cx+Math.cos(t)*r,cz+Math.sin(t)*r]);}}
@@ -45,64 +47,66 @@
   }
   function buildShip(){
     const m=new Mesh();
-    // One dark architectural deck rather than a collection of bright toy desks.
-    m.platform(0,-.36,0,7.9,.36,10.4,1.22,'#17252e');
-    m.platform(0,-.02,0,7.62,.055,10.1,1.13,'#111b23');
-    m.platform(0,.036,0,7.2,.025,9.68,.92,'#1d2a33');
-    // Thin inset metal seams give scale; the central walkway is deliberately calm.
-    for(const x of [-3.23,-.66,.66,3.23])m.box(x,.064,0,.012,.008,8.5,'#344550');
-    for(const z of [-4.2,-1.43,1.43,4.2]){m.box(-2.12,.065,z,2.15,.006,.012,'#41545d');m.box(2.12,.065,z,2.15,.006,.012,'#41545d');}
-    for(const x of [-3.66,3.66]){
-      m.box(x,-.12,0,.055,.15,7.9,'#52616a');m.box(x,.073,0,.025,.01,7.8,'#416674');
-      for(const z of [-3.7,-.8,.8,3.7])m.box(x,.09,z,.032,.018,.38,'#83b6c5');
+    // Human-scale architecture surrounds the local player. The floor is not a
+    // floating model or overview board; walls, beams and stations share meters.
+    m.box(0,-.18,0,14.4,.18,20.4,'#15202a');
+    m.box(0,-.01,0,13.92,.025,19.92,'#18252f');
+    for(let x=-6;x<=6;x+=2)m.box(x,.018,0,.015,.006,19.7,'#31414c');
+    for(let z=-9;z<=9;z+=2)m.box(0,.019,z,13.7,.006,.015,'#31414c');
+    // Unobstructed centre aisle, narrow red edge guides and floor lights.
+    for(const x of [-1.5,1.5]){m.box(x,.026,0,.026,.008,18.2,'#71323f');for(let z=-8;z<=8;z+=2)m.box(x,.033,z,.04,.009,.35,'#b66b72');}
+    for(const x of [-7.1,7.1]){
+      m.box(x,0,0,.2,ROOM.height,20.4,'#1a2a36');
+      m.box(x-Math.sign(x)*.12,.12,0,.035,.19,20,'#4b6370');
+      m.box(x-Math.sign(x)*.12,3.9,0,.04,.12,20,'#506b78');
+      for(const z of [-8,-3,2,7]){m.box(x-Math.sign(x)*.18,0,z,.18,ROOM.height,.18,'#354c5a');m.box(x-Math.sign(x)*.29,2.7,z,.035,.62,.035,'#b35c6e');}
     }
-    // Low prow and aft ribs. No tall pillars that occlude the creatures.
-    for(const z of [-4.71,4.71]){m.platform(0,.07,z,5.2,.15,.31,.14,'#263b47');m.box(0,.225,z,4.65,.012,.028,z<0?'#b94f60':'#4a8b9a');}
-    // Panoramic observation glass and fixed distant stars establish room depth.
-    // Their content is decorative, not a live telemetry surface.
-    m.box(0,.24,-4.69,5.6,.18,.28,'#304752');
-    m.quad([-2.65,.42,-4.76],[2.65,.42,-4.76],[2.65,1.93,-4.98],[-2.65,1.93,-4.98],color('#061824'),false);
-    m.box(0,1.9,-4.96,5.6,.11,.14,'#385460');
-    for(const x of [-2.71,-.93,.93,2.71]){m.box(x,.42,-4.78,.07,1.51,.12,'#466371');m.box(x+.025,.47,-4.7,.011,1.24,.011,'#6d98a9');}
-    for(let n=0;n<34;n++){const x=Math.sin(n*23.7)*2.6,y=.56+(Math.sin(n*7.1)+1)*.61,z=-4.755-(y-.42)*.145;m.quad([x-.006,y-.006,z+.012],[x+.006,y-.006,z+.012],[x+.006,y+.006,z+.012],[x-.006,y+.006,z+.012],color(n%5?'#6a929f':'#d2e8ec',1,n%3?.55:1),false);}
-    // Recessed central navigation well, dark glass and restrained concentric light.
-    m.shadow(0,.066,0,1.06);m.cylinder(0,.07,0,.76,.105,'#101d27');m.cylinder(0,.175,0,.66,.09,'#334650');
-    m.disk(0,.267,0,.59,'#06141d');m.ring(0,.269,0,.59,'#688793',.018);m.ring(0,.27,0,.43,'#77c5d2',.012,.75);m.ring(0,.271,0,.26,'#355667',.008);
-    for(let i=0;i<12;i++){const a=i*Math.PI/6;m.box(Math.sin(a)*.51,.273,Math.cos(a)*.51,.019,.008,.019,'#9bc6cf');}
+    m.box(0,0,10.1,14.4,ROOM.height,.2,'#20313c');
+    // A readable aft doorway, without implying an unimplemented destination.
+    m.box(0,0,9.95,2.4,2.8,.12,'#0b141d');m.box(-1.25,0,9.82,.14,3,.16,'#627987');m.box(1.25,0,9.82,.14,3,.16,'#627987');m.box(0,2.9,9.82,2.65,.14,.16,'#904354');
+    // Forward observation wall: glass covers the whole room end. Fixed stars
+    // are decorative architecture, never live telemetry or another world.
+    m.box(0,0,-10.1,14.4,.55,.2,'#2a3b48');m.box(0,4.25,-10.1,14.4,.55,.2,'#2a3b48');
+    m.quad([-7,.55,-10],[7,.55,-10],[7,4.25,-10],[-7,4.25,-10],color('#071b2a'),false);
+    for(const x of [-6.9,-3.5,0,3.5,6.9])m.box(x,.5,-9.91,.09,3.8,.14,'#4b6877');
+    for(let n=0;n<86;n++){const x=Math.sin(n*23.7)*6.8,y=.7+(Math.sin(n*7.1)+1)*1.65,r=n%7===0?.014:.006;m.quad([x-r,y-r,-9.98],[x+r,y-r,-9.98],[x+r,y+r,-9.98],[x-r,y+r,-9.98],color(n%5?'#799caa':'#d2e8ec',1,n%3?.6:1),false);}
+    // Ceiling frame and recessed light bands maintain scale while looking up.
+    m.box(0,4.8,0,14.4,.12,20.4,'#111e28');
+    for(const x of [-5.9,-2.2,2.2,5.9])m.box(x,4.65,0,.11,.11,19.8,'#3a5260');
+    for(const z of [-7.5,-2.5,2.5,7.5]){m.box(0,4.49,z,14,.18,.15,'#2d4251');m.box(0,4.47,z,5.5,.022,.1,'#9bbac5');}
     for(const {spec,x,z} of STATIONS){
-      m.shadow(x,.066,z,.98);
-      // A sculpted low pod with a readable dark inset, not a fluorescent slab.
-      m.platform(x,.07,z,2.24,.13,2.24,.46,'#30424d');m.platform(x,.20,z,2.1,.045,2.1,.42,'#4a5d66');
-      m.platform(x,.245,z,1.99,.027,1.99,.37,'#15242d');
-      m.ring(x,.275,z+.12,.72,spec.color,.018,.68,Math.PI*.08,Math.PI*.92);
-      m.ring(x,.276,z+.12,.72,'#44616e',.011,.6,Math.PI*1.08,Math.PI*1.92);
-      // A low curved instrument housing sits behind the actor; fine blue-grey UI
-      // strokes remain legible as instruments without painting a giant agent logo.
-      m.platform(x,.28,z-.77,1.52,.19,.42,.19,'#263e4c');m.platform(x,.47,z-.77,1.42,.035,.36,.15,'#0c1c27');
-      m.box(x-.48,.511,z-.77,.28,.01,.015,spec.color);m.box(x+.13,.511,z-.77,.63,.01,.012,'#4c7282');
-      for(let n=0;n<5;n++)m.box(x-.46+n*.2,.513,z-.69,.12,.009,.008,'#45616d');
-      // A subtle floor-facing status strip and a dock number-sized side marker.
-      m.box(x,.278,z+.87,.72,.01,.018,spec.color);m.box(x-.84,.28,z+.66,.02,.015,.11,'#6a8995');
+      // Person-height work alcoves with original creature art hovering above a
+      // console. These six solid consoles are also the navigation colliders.
+      m.shadow(x,.03,z,1.35);m.platform(x,.02,z,2.6,.12,2.6,.32,'#30434f');
+      m.platform(x,.14,z,2.35,.64,2.25,.22,'#243744');m.platform(x,.78,z,2.5,.12,2.4,.24,'#465b67');
+      m.platform(x,.9,z,2.32,.035,2.18,.21,'#12232e');
+      m.ring(x,.94,z+.08,.8,spec.color,.026,.7);
+      m.platform(x,.94,z-.82,1.85,.3,.42,.16,'#2b4657');m.box(x,1.24,z-.82,1.68,.025,.32,'#081b27');
+      m.box(x-.46,1.27,z-.82,.46,.012,.024,spec.color);m.box(x+.3,1.27,z-.82,.65,.012,.016,'#7598a9');
+      m.box(x,.25,z+1.14,.8,.055,.028,spec.color);
+      // Colour is a restrained identity locator, not a claim of current work.
+      m.box(x-Math.sign(x)*1.19,.25,z,.035,.42,1.1,spec.color);
     }
     return m;
   }
+  function buildCompatibilityRoom(){const m=new Mesh();m.box(0,-.12,0,14.4,.12,20.4,'#18252f');m.box(0,4.8,0,14.4,.12,20.4,'#111e28');for(const x of [-7.1,7.1])m.box(x,0,0,.2,4.8,20.4,'#1a2a36');m.box(0,0,10.1,14.4,4.8,.2,'#20313c');m.box(0,0,-10.1,14.4,4.8,.2,'#071b2a');for(const x of [-1.5,1.5])m.box(x,.015,0,.035,.01,18.2,'#71323f');for(const z of [-7.5,-2.5,2.5,7.5])m.box(0,4.49,z,14,.18,.15,'#506b78');for(const {spec,x,z} of STATIONS){m.box(x,.02,z,2.6,.76,2.6,'#243744');m.box(x,.78,z,2.5,.15,2.4,'#465b67');m.box(x,.94,z-.82,1.85,.3,.42,'#2b4657');m.box(x,.25,z+1.31,.8,.05,.025,spec.color);m.box(x-Math.sign(x)*1.31,.25,z,.025,.42,1.1,spec.color);}return m;}
   class Environment {
-    constructor(canvas,{select,zoomChanged,onFrame}={}){
-      Object.assign(this,{canvas,select,zoomChanged,onFrame,width:1,height:1,dpr:1,dprLimit:2,fps:60,zoom:1,pan:{x:0,y:0},yaw:-.18,pitch:.84,rows:new Map(),actors:new Map(),selected:'atlas',active:false,live:false,motion:true,frame:0,dirty:false,clock:0,previous:0,lastDraw:0,pointers:new Map(),hits:[],sprites:new Map(),textures:new Map(),lost:false,destroyed:false});
-      this.focused=null;this.fittedDistance=18;this.fitKey='';
+    constructor(canvas,{select,zoomChanged,onFrame,onTarget}={}){
+      Object.assign(this,{canvas,select,zoomChanged,onFrame,onTarget,width:1,height:1,dpr:1,dprLimit:2,fps:60,zoom:1,pan:{x:0,y:0},yaw:SPAWN.yaw,pitch:SPAWN.pitch,rows:new Map(),actors:new Map(),selected:'atlas',active:false,live:false,motion:true,frame:0,dirty:false,clock:0,previous:0,lastDraw:0,pointers:new Map(),hits:[],sprites:new Map(),textures:new Map(),lost:false,destroyed:false});
+      this.focused=null;this.player={x:SPAWN.x,z:SPAWN.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS};this.movement={x:0,z:0};this.keys=new Set();this.target=null;this.targetSignature='';this.fov=1.22;
       this.performance={draws:0,resizes:0,drawMs:[],frameMs:[],meshBuilds:1};this.mesh=buildShip();
       try{this.gl=canvas.getContext('webgl',{alpha:false,antialias:true,powerPreference:'low-power',preserveDrawingBuffer:false});if(this.gl)this.initGL();}catch{
         // A failed GPU initialization must not abort the app's communication UI.
         try{this.gl?.getExtension('WEBGL_lose_context')?.loseContext();}catch{}
         const replacement=canvas.cloneNode(false);canvas.replaceWith(replacement);this.canvas=canvas=replacement;this.gl=null;
       }
-      if(!this.gl){this.ctx=canvas.getContext('2d',{alpha:false});this.dprLimit=1.25;this.fps=15;}
+      if(!this.gl){this.ctx=canvas.getContext('2d',{alpha:false});this.dprLimit=1.25;this.fps=15;this.softwareMesh=buildCompatibilityRoom();}
       const stage=canvas.parentElement;
       this.labels=document.createElement('div');this.labels.className='spatial-labels';this.labels.setAttribute('aria-hidden','true');stage.append(this.labels);this.labelNodes=new Map();
       for(const spec of SPECS){const el=document.createElement('span');el.className='spatial-label';el.textContent=spec.name;el.style.setProperty('--agent',spec.color);this.labels.append(el);this.labelNodes.set(spec.id,el);}
       this.notice=document.createElement('p');this.notice.className='spatial-render-note';this.notice.textContent=this.gl?'':'Perspective compatibility renderer';stage.append(this.notice);
       this.bindInput();this.observer=new ResizeObserver(()=>this.resize());this.observer.observe(canvas);
-      this.onVisibility=()=>{this.stopFrame();if(!document.hidden){this.requestDraw();this.schedule();}};document.addEventListener('visibilitychange',this.onVisibility);
+      this.onVisibility=()=>{this.stopFrame();if(document.hidden){this.keys.clear();this.movement={x:0,z:0};}else{this.requestDraw();this.schedule();}};document.addEventListener('visibilitychange',this.onVisibility);
       canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();this.lost=true;this.stopFrame();this.notice.textContent='Scene paused · graphics unavailable. Conversations remain available.';});
       canvas.addEventListener('webglcontextrestored',()=>{try{this.textures.clear();this.initGL();this.lost=false;this.notice.textContent='';this.requestDraw();this.schedule();}catch{this.lost=true;this.stopFrame();this.notice.textContent='Scene paused · graphics recovery failed. Conversations remain available.';}});
       this.resize();
@@ -124,41 +128,38 @@
     bindBuffer(buffer){const g=this.gl;g.bindBuffer(g.ARRAY_BUFFER,buffer);for(const [name,size,offset] of [['p',3,0],['c',4,12],['uv',2,28]]){g.enableVertexAttribArray(this.locations[name]);g.vertexAttribPointer(this.locations[name],size,g.FLOAT,false,36,offset);}}
     bindInput(){
       const c=this.canvas;c.style.touchAction='none';
-      c.addEventListener('pointerdown',e=>{c.setPointerCapture?.(e.pointerId);this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,multi:this.pointers.size>0});if(this.pointers.size>1){for(const p of this.pointers.values())p.multi=true;this.pinch=this.pointerDistance();}});
-      c.addEventListener('pointermove',e=>{const p=this.pointers.get(e.pointerId);if(!p)return;const dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;
-        if(this.pointers.size>1){const d=this.pointerDistance();if(this.pinch&&this.pinch>24&&d>24)this.setZoom(this.zoom*clamp(d/this.pinch,.92,1.08));this.pinch=d;this.pan.x=clamp(this.pan.x-dx*.003/this.zoom,-.65,.65);this.pan.y=clamp(this.pan.y+dy*.003/this.zoom,-.8,.8);}
-        else{this.yaw-=dx*.005;this.pitch=clamp(this.pitch+dy*.004,.62,1.35);}this.requestDraw();});
-      c.addEventListener('pointerup',e=>{const p=this.pointers.get(e.pointerId);this.pointers.delete(e.pointerId);this.pinch=0;if(!p||p.multi||Math.hypot(e.clientX-p.sx,e.clientY-p.sy)>8)return;const r=c.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top;const hit=this.hits.filter(h=>Math.abs(x-h.x)<h.w/2&&Math.abs(y-h.y)<h.h/2).sort((a,b)=>a.depth-b.depth)[0];if(hit)this.select?.(hit.id);});
-      const cancel=e=>{this.pointers.delete(e.pointerId);this.pinch=0;};c.addEventListener('pointercancel',cancel);c.addEventListener('lostpointercapture',cancel);
-      c.addEventListener('wheel',e=>{e.preventDefault();this.setZoom(this.zoom*Math.exp(-e.deltaY*.0015));},{passive:false});
-      c.addEventListener('keydown',e=>{if(e.key==='0')this.fit();else if(e.key==='+'||e.key==='=')this.setZoom(this.zoom+.2);else if(e.key==='-')this.setZoom(this.zoom-.2);else if(e.key==='ArrowLeft')this.yaw-=.15;else if(e.key==='ArrowRight')this.yaw+=.15;else if(e.key==='ArrowUp')this.pitch=clamp(this.pitch+.1,.62,1.35);else if(e.key==='ArrowDown')this.pitch=clamp(this.pitch-.1,.62,1.35);else return;e.preventDefault();this.requestDraw();});
+      c.addEventListener('pointerdown',e=>{if(!this.active||e.button>0)return;c.setPointerCapture?.(e.pointerId);this.pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,sx:e.clientX,sy:e.clientY,multi:this.pointers.size>0});if(this.pointers.size>1)for(const p of this.pointers.values())p.multi=true;});
+      c.addEventListener('pointermove',e=>{const p=this.pointers.get(e.pointerId);if(!p)return;const dx=e.clientX-p.x,dy=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;if(this.pointers.size===1)this.look(dx,dy);});
+      c.addEventListener('pointerup',e=>{const p=this.pointers.get(e.pointerId);this.pointers.delete(e.pointerId);if(!p||p.multi||Math.hypot(e.clientX-p.sx,e.clientY-p.sy)>8)return;const r=c.getBoundingClientRect(),hit=this.pick(e.clientX-r.left,e.clientY-r.top);if(hit)this.select?.(hit.id);});
+      const cancel=e=>this.pointers.delete(e.pointerId);c.addEventListener('pointercancel',cancel);c.addEventListener('lostpointercapture',cancel);
+      // Keyboard navigation belongs only to the visible world, never a draft or
+      // dialog. Held keys and touch movement share the same collision path.
+      this.onKeyDown=e=>{if(!this.active||e.altKey||e.ctrlKey||e.metaKey||document.querySelector('dialog[open]')||e.target?.closest?.('input,textarea,select,[contenteditable="true"]'))return;const key=e.key.toLowerCase();if(['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'].includes(key)){this.keys.add(key);e.preventDefault();this.requestDraw();}else if(key==='home'){e.preventDefault();this.resetPlayer();}};
+      this.onKeyUp=e=>{if(this.keys.delete(e.key.toLowerCase())){e.preventDefault();this.requestDraw();}};
+      this.onBlur=()=>{this.keys.clear();this.setMovement(0,0);this.pointers.clear();};
+      window.addEventListener('keydown',this.onKeyDown);window.addEventListener('keyup',this.onKeyUp);window.addEventListener('blur',this.onBlur);
     }
     pointerDistance(){const [a,b]=this.pointers.values();return a&&b?Math.hypot(a.x-b.x,a.y-b.y):0;}
-    setZoom(v){if(!Number.isFinite(v))return;this.zoom=clamp(v,.85,1.35);this.zoomChanged?.(Math.round(this.zoom*100));this.requestDraw();}
-    fit(){this.focused=null;this.yaw=-.18;this.pitch=.84;this.pan={x:0,y:0};this.setZoom(1);this.fitViewport();}
-    focus(id=this.selected){const i=SPECS.findIndex(s=>s.id===id);if(i<0)return;this.focused=id;const p=this.actorPosition(null,i,this.actors.get(id));this.pan={x:p.x,y:p.z};this.zoom=1;this.zoomChanged?.(100);this.requestDraw();}
-    framingPoints(){
-      // Required station, label, and actual camera-facing creature geometry.
-      // Camera-facing artwork does not flatten when the deck is viewed above.
-      const points=[],right=[Math.cos(this.yaw),0,-Math.sin(this.yaw)],up=[-Math.sin(this.yaw)*Math.sin(this.pitch),Math.cos(this.pitch),-Math.cos(this.yaw)*Math.sin(this.pitch)];
-      for(const {x,z} of STATIONS){for(const dx of [-1.2,1.2])for(const dz of [-1.2,1.2])points.push([x+dx,.1,z+dz]);for(const side of [-1,1])for(const height of [0,ACTOR_HEIGHT])points.push([x+right[0]*ACTOR_WIDTH*.57*side+up[0]*height,.29+up[1]*height,z+.12+right[2]*ACTOR_WIDTH*.57*side+up[2]*height]);points.push([x,.2,z+1.12]);}
-      points.push([-2.8,2.05,-4.98],[2.8,2.05,-4.98]);for(const side of [-1,1])for(const end of [-1,1])points.push([side*2.8,-.36,end*5.25],[side*4.0,-.36,end*4.3]);return points;
-    }
-    frameCamera(aspect){
-      const key=[this.width,this.height,this.yaw.toFixed(5),this.pitch.toFixed(5)].join(':');
-      if(key!==this.fitKey){const target=[0,.65,.35],points=this.framingPoints(),mx=Math.min(1.8,2-42/this.width),my=Math.min(1.8,2-44/this.height);let low=3,high=70,last;
-        for(let pass=0;pass<27;pass++){const distance=(low+high)/2,eye=[Math.sin(this.yaw)*Math.cos(this.pitch)*distance,.65+Math.sin(this.pitch)*distance,.35+Math.cos(this.yaw)*Math.cos(this.pitch)*distance],matrix=cameraMatrix(eye,target,aspect).matrix;
-          const projected=points.map(([x,y,z])=>{const w=matrix[3]*x+matrix[7]*y+matrix[11]*z+matrix[15];return [(matrix[0]*x+matrix[4]*y+matrix[8]*z+matrix[12])/w,(matrix[1]*x+matrix[5]*y+matrix[9]*z+matrix[13])/w,w];}),left=Math.min(...projected.map(p=>p[0])),right=Math.max(...projected.map(p=>p[0])),bottom=Math.min(...projected.map(p=>p[1])),top=Math.max(...projected.map(p=>p[1]));
-          const fits=projected.every(p=>p[2]>.2)&&right-left<=mx&&top-bottom<=my;if(fits){high=distance;last={x:(left+right)/2,y:(bottom+top)/2};}else low=distance;
-        }this.fittedDistance=high;this.fitOffset=last||{x:0,y:0};this.fitKey=key;
-      }
-      const focused=this.focused&&SPECS.some(s=>s.id===this.focused),distance=focused?Math.max(6.3,5.8/aspect)/this.zoom:this.fittedDistance/this.zoom,target=[this.pan.x,.65,this.pan.y+(focused?0:.35)];
-      const eye=[target[0]+Math.sin(this.yaw)*Math.cos(this.pitch)*distance,target[1]+Math.sin(this.pitch)*distance,target[2]+Math.cos(this.yaw)*Math.cos(this.pitch)*distance],camera=cameraMatrix(eye,target,aspect);
-      // Off-axis optical centering keeps the complete hull centered at Overview.
-      // Manual pan and explicit Focus remain genuine camera operations.
-      if(!focused)for(let column=0;column<4;column++){camera.matrix[column*4]-=this.fitOffset.x*camera.matrix[column*4+3];camera.matrix[column*4+1]-=this.fitOffset.y*camera.matrix[column*4+3];}
-      return camera;
-    }
+    setMovement(strafe,forward){const x=Number.isFinite(strafe)?clamp(strafe,-1,1):0,z=Number.isFinite(forward)?clamp(forward,-1,1):0,n=Math.max(1,Math.hypot(x,z));this.movement={x:x/n,z:z/n};if(x||z)this.requestDraw();}
+    stopMovement(){this.keys.clear();this.movement={x:0,z:0};this.requestDraw();}
+    movementVector(){if(document.hidden||document.querySelector?.('dialog[open]'))return {x:0,z:0};const x=this.movement.x+(this.keys.has('d')||this.keys.has('arrowright')?1:0)-(this.keys.has('a')||this.keys.has('arrowleft')?1:0),z=this.movement.z+(this.keys.has('w')||this.keys.has('arrowup')?1:0)-(this.keys.has('s')||this.keys.has('arrowdown')?1:0),n=Math.max(1,Math.hypot(x,z));return {x:x/n,z:z/n};}
+    look(dx,dy){if(!Number.isFinite(dx)||!Number.isFinite(dy))return;this.yaw=(this.yaw+dx*.0035+Math.PI*3)%(Math.PI*2)-Math.PI;this.pitch=clamp(this.pitch-dy*.003,-1.15,1.15);this.focused=null;this.requestDraw();}
+    canStand(x,z){if(!Number.isFinite(x)||!Number.isFinite(z)||Math.abs(x)>ROOM.halfWidth-PLAYER_RADIUS-.08||Math.abs(z)>ROOM.halfDepth-PLAYER_RADIUS-.08)return false;for(const station of STATIONS){const nx=clamp(x,station.x-1.3,station.x+1.3),nz=clamp(z,station.z-1.3,station.z+1.3);if(Math.hypot(x-nx,z-nz)<PLAYER_RADIUS)return false;}return true;}
+    movePlayer(dt){const move=this.movementVector();if(!move.x&&!move.z)return;const distance=WALK_SPEED*Math.min(.08,Math.max(0,dt)),dx=(Math.cos(this.yaw)*move.x+Math.sin(this.yaw)*move.z)*distance,dz=(Math.sin(this.yaw)*move.x-Math.cos(this.yaw)*move.z)*distance;
+      // Small bounded steps and independent axes provide wall sliding, without
+      // teleporting through station corners after a long suspended frame.
+      const steps=Math.max(1,Math.ceil(Math.hypot(dx,dz)/.08));for(let i=0;i<steps;i++){if(this.canStand(this.player.x+dx/steps,this.player.z))this.player.x+=dx/steps;if(this.canStand(this.player.x,this.player.z+dz/steps))this.player.z+=dz/steps;}}
+    resetPlayer(){this.player.x=SPAWN.x;this.player.z=SPAWN.z;this.yaw=SPAWN.yaw;this.pitch=SPAWN.pitch;this.focused=null;this.zoom=1;this.keys.clear();this.movement={x:0,z:0};this.zoomChanged?.(100);this.requestDraw();}
+    setZoom(value){if(!Number.isFinite(value))return;this.zoom=clamp(value,.85,1.35);this.zoomChanged?.(Math.round(this.zoom*100));this.requestDraw();}
+    fit(){this.resetPlayer();}
+    focus(id=this.selected){this.focusAgent(id);}
+    focusAgent(id=this.selected){const index=SPECS.findIndex(s=>s.id===id);if(index<0)return false;const p=this.actorPosition(null,index),dx=p.x-this.player.x,dz=p.z-this.player.z;this.yaw=Math.atan2(dx,-dz);this.pitch=Math.atan2(p.y+ACTOR_HEIGHT*.5-EYE_HEIGHT,Math.hypot(dx,dz));this.focused=id;this.requestDraw();return true;}
+    framingPoints(){return [[-ROOM.halfWidth,0,-ROOM.halfDepth],[ROOM.halfWidth,ROOM.height,ROOM.halfDepth],...STATIONS.flatMap(({x,z})=>[[x,.94,z],[x,.94+ACTOR_HEIGHT,z]])];}
+    frameCamera(aspect){const eye=[this.player.x,EYE_HEIGHT,this.player.z],cp=Math.cos(this.pitch),forward=[Math.sin(this.yaw)*cp,Math.sin(this.pitch),-Math.cos(this.yaw)*cp],camera=cameraMatrix(eye,eye.map((v,i)=>v+forward[i]),aspect,this.fov/this.zoom);this.eye=eye;this.forward=forward;this.cameraRight=camera.right;this.cameraUp=camera.up;return {...camera,right:[Math.cos(this.yaw),0,Math.sin(this.yaw)],up:[0,1,0]};}
+    pick(x=this.width/2,y=this.height/2){if(!this.vp||!this.eye)return null;const t=Math.tan(this.fov/this.zoom/2),nx=(x/this.width*2-1)*this.width/this.height*t,ny=(1-y/this.height*2)*t,ray=norm(this.forward.map((v,i)=>v+this.cameraRight[i]*nx+this.cameraUp[i]*ny)),normal=[Math.sin(this.yaw),0,-Math.cos(this.yaw)],den=dot(ray,normal);if(Math.abs(den)<.0001)return null;let best=null;
+      for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),distance=dot(sub([p.x,p.y,p.z],this.eye),normal)/den;if(distance<.1||distance>24)continue;const hit=this.eye.map((v,j)=>v+ray[j]*distance),side=dot(sub(hit,[p.x,p.y,p.z]),this.right);if(Math.abs(side)>ACTOR_WIDTH*.43||hit[1]<p.y+.06||hit[1]>p.y+ACTOR_HEIGHT*.94)continue;if(!best||distance<best.distance)best={id:s.id,agent:s.id,distance,near:Math.hypot(p.x-this.player.x,p.z-this.player.z)<=3.5};}return best;}
+    interactionTarget(){return this.target?{...this.target}:null;}
+    getDebugState(){return this.diagnostics();}
     fitViewport(){
       const stage=this.canvas.parentElement;if(stage.closest('[hidden]'))return;
       // The responsive viewport grid owns scene height. Observe its actual canvas
@@ -170,25 +171,25 @@
     update(rows,live,selected,motion){this.rows=rows;this.live=live===true;this.selected=selected;this.motion=motion===true;
       for(const [i,s] of SPECS.entries()){const row=rows.get(s.id),status=this.live&&['active','idle','queued'].includes(row?.status)?row.status:'unknown';let a=this.actors.get(s.id);if(!a){a={clock:0,status,observed:status!=='unknown',sessionId:row?.sessionId};this.actors.set(s.id,a);}if(a.sessionId!==row?.sessionId){a.clock=0;a.sessionId=row?.sessionId;}if(status==='unknown'&&a.observed)a.frozen=this.actorPosition(null,i,a);if(status!=='unknown')a.frozen=null;a.status=status;a.observed=status!=='unknown';}
       this.requestDraw();this.schedule();}
-    show(active){this.active=active===true;this.labels.hidden=!this.active;if(this.active){this.fitViewport();this.requestDraw();this.schedule();}else{this.stopFrame();this.pointers.clear();}}
+    show(active){this.active=active===true;this.labels.hidden=!this.active;if(this.active){this.fitViewport();this.requestDraw();this.schedule();}else{this.stopFrame();this.pointers.clear();this.keys.clear();this.movement={x:0,z:0};}}
     stopFrame(){cancelAnimationFrame(this.frame);this.frame=0;this.previous=0;}
     requestDraw(invalidate=true){if(invalidate)this.dirty=true;if(!this.active||this.destroyed||this.lost||document.hidden||this.frame)return;this.frame=requestAnimationFrame(t=>{this.frame=0;this.tick(t);});}
-    schedule(){if(this.live&&this.motion&&[...this.actors.values()].some(a=>a.observed&&a.status==='active'))this.requestDraw(false);}
+    schedule(){const move=this.movementVector();if(move.x||move.z||this.live&&this.motion&&[...this.actors.values()].some(a=>a.observed&&a.status==='active'))this.requestDraw(false);}
     tick(t){if(!this.active||this.lost||document.hidden)return;const elapsed=this.previous?t-this.previous:0;if(t-this.lastDraw>=1000/this.fps-1){if(elapsed){this.performance.frameMs.push(elapsed);if(this.performance.frameMs.length>120)this.performance.frameMs.shift();}this.dirty=false;this.advance(Math.min(.08,elapsed/1000));this.previous=t;this.lastDraw=t;this.draw();}
       // A backing-store resize clears WebGL pixels. Retain its invalidation when
       // this RAF is inside the FPS interval, even if motion is reduced or every
       // actor is idle. Animation scheduling alone must never own required paint.
       if(this.dirty)this.requestDraw(false);this.schedule();}
-    advance(dt){if(!this.active||!this.live||!this.motion||document.hidden)return;this.clock+=dt;for(const a of this.actors.values())if(a.observed&&a.status==='active')a.clock+=dt;}
-    scene(){return {perspective:true,W:7.9,H:10.4,scale:1,ox:0,oy:0};}
-    actorPosition(s,i,a=this.actors.get(SPECS[i]?.id)){if(a?.frozen)return a.frozen;const station=STATIONS[i]||{x:0,z:0},phase=(a?.clock||0)*.42;return {x:station.x+(a?.status==='active'?Math.sin(phase)*.08:0),z:station.z+.12+(a?.status==='active'?Math.cos(phase)*.055:0),y:.29};}
+    advance(dt){if(!this.active||document.hidden)return;this.movePlayer(dt);if(!this.live||!this.motion)return;this.clock+=dt;for(const a of this.actors.values())if(a.observed&&a.status==='active')a.clock+=dt;}
+    scene(){return {perspective:true,firstPerson:true,W:ROOM.halfWidth*2,H:ROOM.halfDepth*2,scale:1,ox:0,oy:0};}
+    actorPosition(s,i,a=this.actors.get(SPECS[i]?.id)){if(a?.frozen)return a.frozen;const station=STATIONS[i]||{x:0,z:0},phase=(a?.clock||0)*.42;return {x:station.x+(a?.status==='active'?Math.sin(phase)*.08:0),z:station.z+.12+(a?.status==='active'?Math.cos(phase)*.055:0),y:.94};}
     project(p){const m=this.vp,x=p[0],y=p[1],z=p[2],w=m[3]*x+m[7]*y+m[11]*z+m[15];return {x:(m[0]*x+m[4]*y+m[8]*z+m[12])/w*this.width/2+this.width/2,y:-(m[1]*x+m[5]*y+m[9]*z+m[13])/w*this.height/2+this.height/2,depth:w,s:1/w};}
     point(s,x,z){return this.project([x,.2,z]);}
     draw(){if(!this.active||this.destroyed||this.lost||this.width<2)return;const started=performance.now(),camera=this.frameCamera(this.width/this.height);this.vp=camera.matrix;this.right=camera.right;this.up=camera.up;
       if(this.gl)this.drawGL();else this.drawSoftware();this.updateLabels();this.onFrame?.();this.performance.draws++;this.performance.drawMs.push(performance.now()-started);if(this.performance.drawMs.length>120)this.performance.drawMs.shift();}
     texture(spec){const g=this.gl;if(this.textures.has(spec.id))return this.textures.get(spec.id);const t=g.createTexture();g.bindTexture(g.TEXTURE_2D,t);g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL,true);g.texImage2D(g.TEXTURE_2D,0,g.RGBA,g.RGBA,g.UNSIGNED_BYTE,this.actorSprite(spec));g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MIN_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MAG_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_S,g.CLAMP_TO_EDGE);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_T,g.CLAMP_TO_EDGE);this.textures.set(spec.id,t);return t;}
     drawGL(){const g=this.gl;g.viewport(0,0,this.canvas.width,this.canvas.height);g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);g.disable(g.DEPTH_TEST);g.disable(g.BLEND);g.useProgram(this.backgroundProgram);g.bindBuffer(g.ARRAY_BUFFER,this.backgroundBuffer);g.enableVertexAttribArray(this.backgroundLocation);g.vertexAttribPointer(this.backgroundLocation,2,g.FLOAT,false,8,0);g.drawArrays(g.TRIANGLES,0,3);g.enable(g.DEPTH_TEST);g.enable(g.BLEND);g.useProgram(this.program);g.uniformMatrix4fv(this.locations.vp,false,this.vp);g.uniform1i(this.locations.textured,0);this.bindBuffer(this.staticBuffer);g.drawArrays(g.TRIANGLES,0,this.mesh.data.length/9);
-      const ring=new Mesh(),i=SPECS.findIndex(s=>s.id===this.selected);if(i>=0){const p=this.actorPosition(null,i);ring.ring(p.x,.287,p.z,.75,SPECS[i].color,.035,.95);}
+      const ring=new Mesh(),i=SPECS.findIndex(s=>s.id===this.selected);if(i>=0){const p=this.actorPosition(null,i);ring.ring(p.x,.947,p.z,.8,SPECS[i].color,.035,.95);}
       this.bindBuffer(this.dynamicBuffer);g.bufferSubData(g.ARRAY_BUFFER,0,new Float32Array(ring.data));g.drawArrays(g.TRIANGLES,0,ring.data.length/9);
       // Transparent billboards depth-tested against actual consoles and floor.
       const actors=SPECS.map((s,i)=>({s,i,p:this.actorPosition(null,i)})).sort((a,b)=>this.project([b.p.x,.5,b.p.z]).depth-this.project([a.p.x,.5,a.p.z]).depth);
@@ -199,21 +200,26 @@
         g.bindTexture(g.TEXTURE_2D,this.texture(s));g.bufferSubData(g.ARRAY_BUFFER,0,new Float32Array(vertices));g.drawArrays(g.TRIANGLES,0,6);}
       g.depthMask(true);}
     drawSoftware(){const c=this.ctx;if(!c)return;
-      // Software fallback rasterizes static architecture only when its camera or
-      // viewport changes. Creature motion never re-sorts twenty thousand faces.
+      // A small retained depth buffer replaces face-average painter sorting:
+      // first-person floors and nearby walls cross the near plane and cannot
+      // safely be ordered as whole polygons. Raster work is camera-bound only.
       const key=[this.width,this.height,this.dpr,...this.vp].join(':');
-      if(this.softwareKey!==key){this.softwareKey=key;this.softwareCanvas??=document.createElement('canvas');const canvas=this.softwareCanvas;canvas.width=this.canvas.width;canvas.height=this.canvas.height;const out=canvas.getContext('2d',{alpha:false});out.setTransform(this.dpr,0,0,this.dpr,0,0);const sky=out.createLinearGradient(0,0,0,this.height);sky.addColorStop(0,'#0d1b27');sky.addColorStop(.55,'#071018');sky.addColorStop(1,'#020509');out.fillStyle=sky;out.fillRect(0,0,this.width,this.height);
-        const faces=this.mesh.faces.map(f=>({points:f.p.map(p=>this.project(p)),c:f.c}));for(const f of faces)f.depth=f.points.reduce((s,p)=>s+p.depth,0)/3;faces.sort((a,b)=>b.depth-a.depth);
-        for(const f of faces){if(f.depth<.1||f.points.some(p=>p.depth<.1))continue;polygon(out,f.points.map(p=>[p.x,p.y]),`rgba(${f.c.slice(0,3).map(v=>Math.round(clamp(v,0,1)*255)).join(',')},${f.c[3]})`);}
+      if(this.softwareKey!==key){this.softwareKey=key;this.softwareCanvas??=document.createElement('canvas');const canvas=this.softwareCanvas,scale=Math.min(1,320/this.width,640/this.height);canvas.width=Math.max(1,Math.round(this.width*scale));canvas.height=Math.max(1,Math.round(this.height*scale));const out=canvas.getContext('2d',{alpha:false}),image=out.createImageData(canvas.width,canvas.height),pixels=image.data,depthBuffer=new Float32Array(canvas.width*canvas.height),sx=canvas.width/this.width,sy=canvas.height/this.height;
+        for(let i=0;i<pixels.length;i+=4){pixels[i]=8;pixels[i+1]=17;pixels[i+2]=25;pixels[i+3]=255;}
+        const depth=p=>this.vp[3]*p[0]+this.vp[7]*p[1]+this.vp[11]*p[2]+this.vp[15],clip=points=>{const result=[];for(let i=0;i<points.length;i++){const a=points[i],b=points[(i+1)%points.length],da=depth(a),db=depth(b),insideA=da>=.065,insideB=db>=.065;if(insideA)result.push(a);if(insideA!==insideB){const t=(.065-da)/(db-da);result.push(a.map((v,j)=>mix(v,b[j],t)));}}return result;};
+        const triangle=(a,b,d,tint)=>{const den=(b.y-d.y)*(a.x-d.x)+(d.x-b.x)*(a.y-d.y);if(Math.abs(den)<.0001)return;const left=Math.max(0,Math.floor(Math.min(a.x,b.x,d.x))),right=Math.min(canvas.width-1,Math.ceil(Math.max(a.x,b.x,d.x))),top=Math.max(0,Math.floor(Math.min(a.y,b.y,d.y))),bottom=Math.min(canvas.height-1,Math.ceil(Math.max(a.y,b.y,d.y))),rgb=tint.slice(0,3).map(v=>Math.round(clamp(v,0,1)*255)),alpha=tint[3];
+          for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++){const px=x+.5,py=y+.5,u=((b.y-d.y)*(px-d.x)+(d.x-b.x)*(py-d.y))/den,v=((d.y-a.y)*(px-d.x)+(a.x-d.x)*(py-d.y))/den,w=1-u-v;if(u<-.0001||v<-.0001||w<-.0001)continue;const z=u/a.depth+v/b.depth+w/d.depth,index=y*canvas.width+x;if(z<depthBuffer[index])continue;depthBuffer[index]=z;const offset=index*4;for(let channel=0;channel<3;channel++)pixels[offset+channel]=rgb[channel]*alpha+pixels[offset+channel]*(1-alpha);}}
+        for(const face of this.softwareMesh.faces){const points=clip(face.p).map(p=>{const q=this.project(p);return {...q,x:q.x*sx,y:q.y*sy};});for(let i=1;i+1<points.length;i++)triangle(points[0],points[i],points[i+1],face.c);}out.putImageData(image,0,0);
       }
-      c.setTransform(1,0,0,1,0,0);c.drawImage(this.softwareCanvas,0,0);c.setTransform(this.dpr,0,0,this.dpr,0,0);
-      const actors=SPECS.map((s,i)=>{const p=this.actorPosition(null,i);return {s,p,base:this.project([p.x,p.y,p.z]),top:this.project([p.x+this.up[0]*ACTOR_HEIGHT,p.y+this.up[1]*ACTOR_HEIGHT,p.z+this.up[2]*ACTOR_HEIGHT])};}).sort((a,b)=>b.base.depth-a.base.depth);
-      for(const {s,base,top} of actors){if(base.depth<.1)continue;const h=base.y-top.y;c.globalAlpha=this.actors.get(s.id)?.observed?1:.48;c.drawImage(this.actorSprite(s),top.x-h/2,top.y,h,h);}c.globalAlpha=1;
+      c.setTransform(1,0,0,1,0,0);c.imageSmoothingEnabled=true;c.drawImage(this.softwareCanvas,0,0,this.canvas.width,this.canvas.height);c.setTransform(this.dpr,0,0,this.dpr,0,0);
+      const actors=SPECS.map((s,i)=>{const p=this.actorPosition(null,i);return {s,p,base:this.project([p.x,p.y,p.z]),top:this.project([p.x,p.y+ACTOR_HEIGHT,p.z])};}).sort((a,b)=>b.base.depth-a.base.depth);
+      for(const {s,base,top} of actors){if(base.depth<.1||top.depth<.1)continue;const h=base.y-top.y;if(h<=0)continue;c.globalAlpha=this.actors.get(s.id)?.observed?1:.48;c.drawImage(this.actorSprite(s),top.x-h*ACTOR_WIDTH/ACTOR_HEIGHT/2,top.y,h*ACTOR_WIDTH/ACTOR_HEIGHT,h);}c.globalAlpha=1;
     }
-    updateLabels(){this.hits=[];for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),station=STATIONS[i],a=this.project([p.x+this.up[0]*ACTOR_HEIGHT*.5,p.y+this.up[1]*ACTOR_HEIGHT*.5,p.z+this.up[2]*ACTOR_HEIGHT*.5]),label=this.project([station.x,.28,station.z+1.02]),el=this.labelNodes.get(s.id);const visible=label.depth>0&&label.x>16&&label.x<this.width-16&&label.y>10&&label.y<this.height-12;el.hidden=!visible;el.classList.toggle('selected',s.id===this.selected);el.dataset.status=this.actors.get(s.id)?.status||'unknown';el.style.transform=`translate(${label.x.toFixed(1)}px,${label.y.toFixed(1)}px)`;this.hits.push({id:s.id,x:a.x,y:a.y,w:Math.max(44,ACTOR_WIDTH*1.12*a.s*this.height),h:Math.max(50,ACTOR_HEIGHT*1.12*a.s*this.height),depth:a.depth},{id:s.id,x:label.x,y:label.y,w:78,h:30,depth:label.depth});}}
-    projectedBounds(){const points=this.framingPoints().map(p=>this.project(p));return {left:Math.min(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),right:Math.max(...points.map(p=>p.x)),bottom:Math.max(...points.map(p=>p.y)),labels:[...this.labelNodes.values()].filter(el=>!el.hidden).length};}
-    diagnostics(){const p=(a)=>a.length?Math.round(a.slice().sort((a,b)=>a-b)[Math.floor((a.length-1)*.95)]*100)/100:null;return {renderer:this.gl?'webgl-perspective':'canvas-perspective-fallback',active:this.active,live:this.live,motion:this.motion,contextLost:this.lost,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,focused:this.focused,projectedBounds:this.vp?this.projectedBounds():null,camera:{yaw:this.yaw,pitch:this.pitch,x:this.pan.x,z:this.pan.y},draws:this.performance.draws,pendingPaint:this.dirty,pendingFrame:!!this.frame,resizes:this.performance.resizes,meshBuilds:this.performance.meshBuilds,triangles:this.mesh.data.length/27,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,sampleLimit:120,drawCpuP95Ms:p(this.performance.drawMs),rafIntervalP95Ms:p(this.performance.frameMs),scope:'Recent WebView CPU and RAF intervals, not GPU presentation or native-chat frame timing'};}
-    destroy(){this.show(false);this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);this.labels.remove();this.notice.remove();const g=this.gl;if(g){for(const t of this.textures.values())g.deleteTexture(t);g.deleteBuffer(this.staticBuffer);g.deleteBuffer(this.dynamicBuffer);g.deleteBuffer(this.backgroundBuffer);g.deleteProgram(this.program);g.deleteProgram(this.backgroundProgram);}}
+    updateLabels(){this.hits=[];for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),centre=this.project([p.x,p.y+ACTOR_HEIGHT*.5,p.z]),label=this.project([p.x,p.y+ACTOR_HEIGHT+.14,p.z]),el=this.labelNodes.get(s.id),distance=Math.hypot(p.x-this.player.x,p.z-this.player.z);const visible=label.depth>.15&&label.x>20&&label.x<this.width-20&&label.y>12&&label.y<this.height-12&&distance<19;el.hidden=!visible;el.classList.toggle('selected',s.id===this.selected);el.dataset.status=this.actors.get(s.id)?.status||'unknown';const transform=`translate(${label.x.toFixed(1)}px,${label.y.toFixed(1)}px)`;if(el.style.transform!==transform)el.style.transform=transform;if(centre.depth>.15)this.hits.push({id:s.id,x:centre.x,y:centre.y,w:Math.max(30,ACTOR_WIDTH*centre.s*this.height),h:Math.max(35,ACTOR_HEIGHT*centre.s*this.height),depth:centre.depth});}
+      this.target=this.pick();const target=this.target?{...this.target,distance:Math.round(this.target.distance*10)/10}:null,signature=JSON.stringify(target);if(signature!==this.targetSignature){this.targetSignature=signature;this.onTarget?.(target||{agent:null,id:null,near:false,distance:null});}}
+    projectedBounds(){const points=this.framingPoints().map(p=>this.project(p)).filter(p=>p.depth>.1);if(!points.length)return null;return {left:Math.min(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),right:Math.max(...points.map(p=>p.x)),bottom:Math.max(...points.map(p=>p.y)),labels:[...this.labelNodes.values()].filter(el=>!el.hidden).length};}
+    diagnostics(){const p=(a)=>a.length?Math.round(a.slice().sort((a,b)=>a-b)[Math.floor((a.length-1)*.95)]*100)/100:null,nearby=STATIONS.map(station=>({agent:station.spec.id,distance:Math.round(Math.hypot(station.x-this.player.x,station.z-this.player.z)*10)/10})).sort((a,b)=>a.distance-b.distance).filter(agent=>agent.distance<=3.5);return {renderer:this.gl?'webgl-first-person':'canvas-first-person-fallback',mode:'first-person',active:this.active,live:this.live,motion:this.motion,contextLost:this.lost,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,focused:this.focused,projectedBounds:this.vp?this.projectedBounds():null,player:{x:this.player.x,z:this.player.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS,yaw:this.yaw,pitch:this.pitch,speed:WALK_SPEED,collision:this.canStand(this.player.x,this.player.z)?'clear':'blocked',movement:this.movementVector()},camera:{yaw:this.yaw,pitch:this.pitch,x:this.player.x,y:EYE_HEIGHT,z:this.player.z},room:{width:ROOM.halfWidth*2,depth:ROOM.halfDepth*2,height:ROOM.height},target:this.interactionTarget(),nearby,draws:this.performance.draws,pendingPaint:this.dirty,pendingFrame:!!this.frame,resizes:this.performance.resizes,meshBuilds:this.performance.meshBuilds,triangles:this.mesh.data.length/27,softwareTriangles:this.softwareMesh?this.softwareMesh.data.length/27:null,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,sampleLimit:120,drawCpuP95Ms:p(this.performance.drawMs),rafIntervalP95Ms:p(this.performance.frameMs),scope:'Local navigation and recent WebView CPU/RAF intervals; not agent travel, productive work, GPU presentation or native-chat frame timing'};}
+    destroy(){this.show(false);this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);window.removeEventListener('keydown',this.onKeyDown);window.removeEventListener('keyup',this.onKeyUp);window.removeEventListener('blur',this.onBlur);this.labels.remove();this.notice.remove();const g=this.gl;if(g){for(const t of this.textures.values())g.deleteTexture(t);g.deleteBuffer(this.staticBuffer);g.deleteBuffer(this.dynamicBuffer);g.deleteBuffer(this.backgroundBuffer);g.deleteProgram(this.program);g.deleteProgram(this.backgroundProgram);}}
     actorSprite(spec){
       const key=[spec.id,spec.kind,spec.color,this.dprLimit].join(':');if(this.sprites.has(key))return this.sprites.get(key);
       // Code-native vector drawing cached at device quality; no downloaded artwork or

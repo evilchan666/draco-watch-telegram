@@ -559,15 +559,10 @@ public final class TelegramSurface extends FrameLayout {
 
     public boolean back() {
         if (!showing()) return false;
-        if (chat) {
-            emit("closeChat");
-            return true;
-        }
-        if (!"chats".equals(viewName)) {
-            emit("view", data("view", "chats"));
-            return true;
-        }
-        return false;
+        // The WebView owns the navigation stack and the retained player pose.
+        // Native chat, Activity and roster all return through that same reducer.
+        emit("back");
+        return true;
     }
 
     @Override protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {

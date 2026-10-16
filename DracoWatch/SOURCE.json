@@ -1,11 +1,11 @@
 {
-  "watchSource": "8d2791fb57e0ea585c6309267a2847be1ca4540e",
+  "watchSource": "d03208e6633b03ab218d12a0ad6d45e52527e2b5",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
-  "versionName": "0.4.1",
-  "versionCode": 25,
-  "integration": "S25 aspect-fitted six-station scene, bounded camera and compact touch controls; exact-session full observation reader; required idle repaint and rendered-pixel regression. Existing RecyclerView and Telegram SmoothScroller retained.",
+  "versionName": "0.5.0",
+  "versionCode": 26,
+  "integration": "First-person operating Environment and native Telegram-derived full-feature conversation over existing Watch transport",
   "loginMigration": false,
-  "updaterPublished": true,
+  "updaterPublished": false,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
     "version": "0.4.0",
