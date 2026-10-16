@@ -5,12 +5,13 @@
   "versionCode": 27,
   "integration": "native Telegram component subset and RecyclerView with retained first-person operating world",
   "loginMigration": false,
-  "updaterPublished": false,
+  "updaterPublished": true,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
     "version": "0.5.0",
     "versionCode": 26,
     "sha256": "dce39fc5f2a621eec7460c9a3da1d5c4469d7471b44bbfda7d7c1ad708fb8534"
   },
-  "releaseState": "Integrated unpaired Android verification candidate; not published or device accepted"
+  "releaseState": "Published0.6.0/code27; authenticated full updater download verified; physical installation and acceptance unverified",
+  "pairedApkSha256": "7651deaff1129ed59669d603a242ca418e72b20f495fa0504b5a0217a40cfbe7"
 }
