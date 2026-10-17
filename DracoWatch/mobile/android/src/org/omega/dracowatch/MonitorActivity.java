@@ -152,6 +152,7 @@ public final class MonitorActivity extends Activity {
         @JavascriptInterface public void resumeMedia(String id){main.post(()->resumePlayback(id));}
         @JavascriptInterface public void seekMedia(String id,long positionMs){main.post(()->seekPlayback(id,positionMs));}
         @JavascriptInterface public String nativeDiagnostics(){return diagnostics==null?"{}":diagnostics.export();}
+        @JavascriptInterface public void openConnectionStatus(){main.post(()->showConnectionStatus());}
         @JavascriptInterface public void recordDiagnostic(String json){if(json==null||json.length()>2048||diagnostics==null)return;try{diagnostics.record(new JSONObject(json));}catch(Exception ignored){}}
         @JavascriptInterface public void requestLocalWebInspection(){main.post(()->MonitorActivity.this.requestLocalWebInspection());}
         @JavascriptInterface public void checkUpdates(){main.post(()->updater.check(true));}

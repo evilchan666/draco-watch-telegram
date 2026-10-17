@@ -22,7 +22,7 @@
   const ROOM={halfWidth:7,halfDepth:10,height:4.8};
   const STATIONS=SPECS.map((spec,i)=>({spec,x:(i%2?1:-1)*4.4,z:-5+Math.floor(i/2)*5}));
   const ACTOR_HEIGHT=1.82,ACTOR_WIDTH=1.9,PLAYER_RADIUS=.32,EYE_HEIGHT=1.65,WALK_SPEED=2.2;
-  const SPAWN={x:0,z:3,yaw:-.9724,pitch:0};
+  const SPAWN={x:0,z:5.6,yaw:-.40,pitch:.015};
   class Mesh {
     constructor(){this.data=[];this.faces=[];}
     tri(a,b,c,rgba,lit=true,normals=null){
@@ -62,55 +62,184 @@
     shadow(x,y,z,r){for(let i=0;i<5;i++)this.disk(x,y+i*.001,z,r*(1-i*.13),'#01060b',.035+i*.018);}
   }
   function buildShip(){
-    const m=new Mesh();
-    // A continuous human-scale interior rather than six objects on a neon tray.
-    // The circulation lane, sight lines and original solid console colliders stay
-    // unchanged. Fine seams are quiet; daylight and task bays provide depth.
-    m.box(0,-.18,0,14.4,.18,20.4,'#121b24');
-    m.box(0,-.01,0,13.92,.025,19.92,'#273541');
-    for(let z=-8;z<=8;z+=4)m.box(0,.018,z,13.8,.004,.016,'#17252f');
-    for(const x of [-1.6,1.6]){m.box(x,.019,0,.024,.005,18.3,'#17252f');for(const z of [-7.5,-2.5,2.5,7.5])m.box(x,.024,z,.035,.006,.42,'#acbac0');}
-    // A centre runner establishes forward travel without a glowing floor grid.
-    m.box(0,.014,0,2.9,.009,18.4,'#1e2d38');
-    for(const x of [-7.1,7.1]){
-      m.box(x,0,0,.2,ROOM.height,20.4,'#263845');
-      m.box(x-Math.sign(x)*.13,.08,0,.04,.2,20,'#506572');
-      m.box(x-Math.sign(x)*.12,3.95,0,.05,.12,20,'#536e7e');
-      for(const z of [-8,-3,2,7]){
-        m.box(x-Math.sign(x)*.2,0,z,.24,ROOM.height,.22,'#607784');
-        m.box(x-Math.sign(x)*.33,2.0,z,.028,.95,.09,'#d3e1df');
-      }
-      // Recessed upper panels are opaque architectural material, not status.
-      for(const z of [-5,0,5]){m.box(x-Math.sign(x)*.14,1.14,z,.055,2.45,4.45,'#1a2d3b');m.box(x-Math.sign(x)*.19,3.50,z,.05,.035,3.9,'#91b4c6');}
+    const m=new Mesh(), graphite='#111923',frame='#34424d',red='#8a2738',pale='#abbac0';
+    // Human-scale circulation and solid station footprints stay exactly the
+    // same. Everything here is retained architectural geometry, not fake work
+    // telemetry. Black/red belongs to the ship; colour belongs to identities.
+    m.box(0,-.18,0,14.4,.18,20.4,'#080d14');
+    m.box(0,-.008,0,13.98,.025,19.98,'#111b25');
+    m.box(0,.009,0,3.0,.018,19.8,'#17222c');
+    for(const x of [-1.52,1.52]){
+      m.box(x,.029,0,.035,.009,19.2,'#662333');
+      for(const z of [-8,-6,-4,-2,0,2,4,6,8])m.box(x,.040,z,.045,.006,.24,'#b5c1c2');
     }
-    m.box(0,0,10.1,14.4,ROOM.height,.2,'#253946');
-    m.box(0,0,9.95,2.4,2.8,.12,'#101c27');m.box(-1.25,0,9.82,.14,3,.16,'#68828e');m.box(1.25,0,9.82,.14,3,.16,'#68828e');m.box(0,2.9,9.82,2.65,.14,.16,'#ad5762');
-    m.box(0,0,-10.1,14.4,.55,.2,'#344c5b');m.box(0,4.25,-10.1,14.4,.55,.2,'#344c5b');
-    m.quad([-7,.55,-10],[7,.55,-10],[7,4.25,-10],[-7,4.25,-10],color('#122b3d'),false);
-    // A restrained horizon makes the observation wall spatially legible. It is
-    // decorative, never a simulated live external world or a destination.
-    m.quad([-7,.55,-9.995],[7,.55,-9.995],[7,1.15,-9.995],[-7,1.15,-9.995],color('#345365'),false);
-    m.quad([-7,1.15,-9.994],[7,1.15,-9.994],[7,1.18,-9.994],[-7,1.18,-9.994],color('#8ba8b5'),false);
-    for(const x of [-6.9,-3.5,0,3.5,6.9])m.box(x,.5,-9.91,.09,3.8,.14,'#6c8997');
-    for(let n=0;n<56;n++){const x=Math.sin(n*23.7)*6.8,y=1.4+(Math.sin(n*7.1)+1)*1.25,r=n%7===0?.012:.005;m.quad([x-r,y-r,-9.98],[x+r,y-r,-9.98],[x+r,y+r,-9.98],[x-r,y+r,-9.98],color(n%5?'#799caa':'#d2e8ec',1,n%3?.6:1),false);}
-    m.box(0,4.8,0,14.4,.12,20.4,'#1b2a35');
-    for(const x of [-5.9,5.9])m.box(x,4.65,0,.12,.12,19.8,'#72828b');
-    for(const z of [-7.5,-2.5,2.5,7.5]){m.box(0,4.49,z,14,.18,.18,'#455c6b');m.box(0,4.465,z,4.8,.026,.11,'#c5d7db');}
+    // Quiet staggered deck plates, service channels and real depth at the wall.
+    for(const side of [-1,1])for(let bay=0;bay<4;bay++){
+      const x=side*4.3,z=-7.5+bay*5;
+      m.box(x,.012,z,5.4,.018,4.92,bay%2?'#131c26':'#101923');
+      m.box(side*6.63,.035,z,.15,.022,4.65,'#060c13');
+      for(let n=0;n<8;n++)m.box(side*6.63,.06,z-1.9+n*.54,.12,.015,.045,'#48555f');
+    }
+    // Structural shell: articulated frames and inset panels, not a box with a
+    // neon grid. Sloping shoulders put the ceiling at believable human scale.
+    m.box(0,4.82,0,14.4,.13,20.4,'#101923');
+    // Recessed overhead service cassettes break up the tall portrait field. The
+    // same physical lights are visible while walking; nothing pulses/twinkles.
+    for(const z of [-7.5,-2.5,2.5,7.5]){
+      m.box(0,4.73,z,3.25,.07,4.22,'#1b2733');
+      for(const side of [-1,1]){
+        m.box(side*1.55,4.70,z,.06,.035,4.0,'#672c3c');
+        m.box(side*1.18,4.695,z,.27,.025,2.7,'#8fabb8');
+        m.box(side*1.18,4.684,z,.12,.012,2.52,'#d4dadd');
+      }
+      for(const side of [-1,1]){
+        m.box(side*4.35,4.73,z,1.62,.055,3.65,'#1e2934');
+        for(const edge of [-1,1])m.box(side*4.35+edge*.64,4.705,z,.055,.020,3.36,'#b4c4cc');
+        m.box(side*4.35,4.699,z,.54,.020,1.05,'#425565');
+      }
+      m.box(0,4.68,z,.93,.045,2.5,'#080f17');
+      for(let vent=0;vent<9;vent++)m.box(0,4.665,z-1.08+vent*.27,.80,.016,.045,'#4a5a68');
+    }
+    for(const side of [-1,1]){
+      m.box(side*7.1,0,0,.20,ROOM.height,20.4,'#0a1018');
+      m.box(side*6.97,.02,0,.12,.28,20,'#34404a');
+      m.box(side*6.91,.31,0,.06,.055,19.8,red);
+      m.box(side*6.62,3.83,0,.08,.14,20,'#421c29');
+      m.box(side*6.52,3.91,0,.06,.035,19.7,'#b33948');
+      m.box(side*4.86,4.60,0,.22,.12,19.8,'#1f2b36');
+      m.box(side*4.83,4.56,0,.055,.022,19.8,pale);
+      for(const z of [-7.5,-2.5,2.5,7.5]){
+        m.box(side*6.83,0,z,.30,3.52,.24,frame);
+        m.tube([side*6.83,3.45,z],[side*5.45,4.65,z],.18,frame,4);
+        m.box(side*5.38,4.48,z,.28,.25,.30,frame);
+        m.box(0,4.51,z,10.9,.20,.24,'#23313c');
+        m.box(0,4.49,z,2.8,.018,.12,'#b5c3c8');
+        // Warm low-level navigation lamps, not animated status indicators.
+        m.box(side*6.65,.68,z,.045,.26,.10,'#bd6265');
+      }
+      for(const z of [-5,0,5]){
+        m.box(side*6.96,1.03,z,.035,2.36,4.37,'#17222c');
+        m.box(side*6.92,1.08,z,.025,.05,4.25,'#394650');
+        m.box(side*6.91,3.32,z,.026,.04,4.25,'#485861');
+        // One narrow structural inset per bay is enough to communicate scale.
+        m.box(side*6.90,1.32,z-.96,.035,1.67,.08,'#293841');
+        m.box(side*6.90,1.32,z+.96,.035,1.67,.08,'#293841');
+      }
+    }
+    // Aft pressure door, bevelled reveal and a continuous red header establish
+    // a readable return landmark. It has no invented destination/door action.
+    m.box(0,0,10.1,14.4,4.8,.20,'#121b24');
+    m.box(0,0,9.95,3.12,3.25,.12,'#26343e');
+    m.box(0,.06,9.86,2.72,2.97,.10,'#080f17');
+    m.box(0,.08,9.79,.022,2.90,.025,'#44535e');
+    for(const x of [-1.52,1.52]){m.box(x,.02,9.78,.12,3.16,.12,'#607079');m.box(x,.93,9.70,.035,.60,.035,'#d1b8ac');}
+    m.box(0,3.16,9.77,3.18,.16,.16,red);
+    // Deep panoramic observation aperture. Exterior geometry sits behind the
+    // opening, so parallax and perspective remain real when the player walks.
+    m.box(0,0,-10.12,14.4,.62,.24,'#25323c');
+    m.box(0,4.20,-10.12,14.4,.60,.24,'#25323c');
+    m.box(0,.62,-9.94,14.05,.11,.26,'#74838b');
+    m.box(0,.73,-9.88,13.9,.035,.09,'#6f293a');
+    m.box(0,4.11,-9.96,14,.10,.20,'#5e717c');
+    for(const side of [-1,1]){
+      m.box(side*6.87,.60,-9.91,.20,3.55,.28,'#53636e');
+      m.tube([side*6.87,.74,-9.91],[side*5.87,.74,-9.91],.07,frame,4);
+      m.tube([side*6.84,3.98,-9.91],[side*5.92,4.12,-9.91],.10,frame,4);
+    }
+    m.quad([-22,-12,-23],[22,-12,-23],[22,16,-23],[-22,16,-23],color('#020812'),false);
+    // Fixed orbital vista, explicitly decorative. No camera-facing background,
+    // clocks, random twinkling, per-frame mesh build or large texture download.
+    let seed=17853;const random=()=>{seed=(seed*16807)%2147483647;return (seed-1)/2147483646;};
+    for(let n=0;n<124;n++){
+      const x=(random()-.5)*40,y=random()*15-2,r=n%17===0?.025:.009+random()*.009,z=-22.9;
+      m.quad([x-r,y-r,z],[x+r,y-r,z],[x+r,y+r,z],[x-r,y+r,z],color(n%7?'#9baac3':'#e3d1bd',.44+random()*.50),false);
+      if(n%31===0){m.quad([x-r*.4,y-r*3,z+.001],[x+r*.4,y-r*3,z+.001],[x+r*.4,y+r*3,z+.001],[x-r*.4,y+r*3,z+.001],color('#6f8aa8',.45),false);}
+    }
+    // Elliptical planet limb. Vertex-colour bands keep the atmosphere smooth
+    // with a tiny fixed mesh instead of an expensive full-screen shader.
+    const cx=2.2,cy=-7.0,rx=17.4,ry=12.0,pz=-22.65;
+    const bands=[[0,'#091a26'],[.73,'#0b2637'],[.89,'#12364b'],[.965,'#1c4c65'],[.985,'#4c839b'],[.995,'#99c8d6'],[1,'#4e94b5'],[1.009,'#203c56'],[1.018,'#081421']];
+    for(let j=0;j<bands.length-1;j++)for(let n=0;n<64;n++){
+      const a=n*Math.PI*2/64,b=(n+1)*Math.PI*2/64,inner=bands[j],outer=bands[j+1],point=(r,t)=>[cx+Math.cos(t)*rx*r,cy+Math.sin(t)*ry*r,pz];
+      const p=point(inner[0],a),q=point(inner[0],b),r=point(outer[0],b),t=point(outer[0],a);
+      // Match the edge colours shared by neighbouring bands for a continuous
+      // limb gradient. Surface geometry is unlit and never treated as work.
+      const ci=color(inner[1]),co=color(outer[1]),offset=m.data.length;
+      m.tri(p,q,r,ci,false);m.tri(p,r,t,ci,false);
+      for(const vertex of [2,4,5])for(let channel=0;channel<4;channel++)m.data[offset+vertex*12+3+channel]=co[channel];
+    }
+    // A low-frequency surface field adds continents and cloud systems to the
+    // fixed vista. It is baked once into vertex colours, never a frame shader.
+    const surface=(u,v)=>{
+      const r=Math.hypot(u,v),land=Math.sin(u*17+Math.sin(v*13)*1.8)+Math.cos(v*23-u*11)*.58+Math.sin(u*43+v*19)*.21;
+      const cloud=Math.max(0,Math.sin(u*32+v*19+Math.sin(v*17)*2.7)+Math.cos(u*13-v*37)*.45-1.0),fade=clamp((.88-r)*12,0,1);
+      const band=Math.max(0,bands.findIndex(b=>b[0]>=r)-1),a=bands[band],b=bands[band+1],t=clamp((r-a[0])/(b[0]-a[0]),0,1),ca=color(a[1]),cb=color(b[1]);
+      return ca.slice(0,3).map((c,i)=>Math.min(.68,mix(c,cb[i],t)+((land>.52?[.032,.045,.035][i]:0)+cloud*.12)*fade));
+    };
+    for(let row=0;row<22;row++)for(let col=0;col<36;col++){
+      const u=-.94+col*1.88/36,v=-.94+row*1.88/22,du=1.88/36,dv=1.88/22,coords=[[u,v],[u+du,v],[u+du,v+dv],[u,v+dv]];
+      if(coords.some(([u,v])=>Math.hypot(u,v)>.94))continue;
+      const points=coords.map(([u,v])=>[cx+rx*u,cy+ry*v,pz+.01]),offset=m.data.length;
+      m.quad(...points,[1,1,1,1],false);
+      for(const [vertex,index] of [0,1,2,0,2,3].entries()){
+        const rgb=surface(...coords[index]);for(let channel=0;channel<3;channel++)m.data[offset+vertex*12+3+channel]=rgb[channel];
+      }
+    }
+    // Observation rail and the long red side seams give the room a forward
+    // axis while leaving the lane and all six existing destinations intact.
+    m.box(0,.86,-9.88,12.6,.06,.09,'#627986');
+    for(const x of [-5.8,0,5.8])m.box(x,.02,-9.88,.065,.84,.065,'#344953');
     for(const {spec,x,z} of STATIONS){
-      // Sculpted graphite bases and open work surfaces replace thick neon slabs.
-      // Footprints deliberately retain the existing collision contract.
-      m.shadow(x,.03,z,1.33);m.platform(x,.02,z,2.6,.12,2.6,.32,'#1b2b36');
-      m.platform(x,.14,z,2.18,.59,2.1,.22,'#203340');m.platform(x,.73,z,2.5,.10,2.4,.24,'#6a8089');
-      m.platform(x,.83,z,2.32,.105,2.18,.21,'#233c49');
-      m.disk(x,.942,z+.08,.70,'#101f29',1,40);m.ring(x,.945,z+.08,.72,'#8ba0aa',.018,1);
-      m.ring(x,.948,z+.08,.69,spec.color,.018,.68,-.45,1.15);
-      m.platform(x,.94,z-.82,1.75,.18,.38,.12,'#314b5b');m.box(x,1.12,z-.82,1.58,.024,.28,'#0b1e2b');
-      m.box(x-.46,1.146,z-.82,.38,.008,.018,spec.color);m.box(x+.3,1.146,z-.82,.60,.008,.014,'#7295a5');
-      m.box(x,.25,z+1.065,.75,.045,.028,spec.color);
-      // Locator accents are identity only, never an animated work assertion.
-      m.box(x-Math.sign(x)*1.10,.40,z,.022,.045,.40,spec.color);
+      const side=Math.sign(x);
+      // Split-foot console: an open graphite desk, not a pedestal with a pet
+      // on top. The entire 2.6m footprint still obeys the old collider.
+      m.disk(x,.026,z,1.28,'#060b11',1,32);
+      m.platform(x,.03,z,2.56,.10,2.56,.28,'#0a111a');
+      for(const dz of [-.75,.75])m.platform(x,.13,z+dz,1.78,.59,.31,.07,'#1a2834');
+      m.platform(x,.73,z,2.48,.10,2.36,.20,'#56636c');
+      m.platform(x,.83,z,2.36,.10,2.24,.18,'#131e2a');
+      m.disk(x,.935,z+.08,.67,'#091521',1,32);
+      m.ring(x,.938,z+.08,.69,'#354956',.014,1,0,Math.PI*2);
+      m.ring(x,.941,z+.08,.67,spec.color,.012,.63,-.45,1.15);
+      // Outboard console framing and slanted task surface read as equipment.
+      m.box(x+side*.99,.91,z,.10,.85,1.90,'#253641');
+      m.box(x+side*.97,1.76,z,.13,.065,1.97,'#5b6f7a');
+      for(const dz of [-.96,.96])m.box(x+side*.96,.91,z+dz,.14,.90,.07,'#60717a');
+      m.box(x+side*.90,1.05,z,.035,.65,1.80,'#071623');
+      // Graphic traces are engraved, fixed station furnishings. Real reports
+      // continue through the app's exact-session conversation/Operations UI.
+      for(let n=0;n<5;n++)m.box(x+side*.87,1.18+n*.082,z-.55+(n%2)*.04,.013,.012,.46+(n%3)*.17,n===0?spec.color:'#477080');
+      m.box(x+side*.87,1.17,z+.58,.014,.34,.05,spec.color);
+      m.box(x-side*1.11,.57,z,.024,.08,.66,'#223544');
+      m.box(x-side*1.135,.59,z,.012,.022,.48,spec.color);
+      for(const dz of [-.92,.92])m.box(x-side*.75,.943,z+dz,.30,.014,.025,'#778b93');
+      // Each bay has a narrow aisle locator, not a coloured floor tile.
+      m.box(side*2.57,.034,z,.78,.012,.032,'#40515c');
+      m.box(side*2.57,.048,z,.23,.008,.035,spec.color);
     }
     return m;
+  }
+  function buildStationSigns(){
+    // One small locally authored atlas, one retained draw call. The signs name
+    // actual identities/roles and destinations, never synthetic live metrics.
+    const canvas=document.createElement('canvas');canvas.width=1024;canvas.height=1024;
+    const c=canvas.getContext('2d'),mesh=new Mesh();c.fillStyle='#07111b';c.fillRect(0,0,1024,1024);
+    const quad=(points,index)=>{
+      const start=mesh.data.length;mesh.quad(...points,[1,1,1,1],false);
+      const uv=[[0,1-index/8],[1,1-index/8],[1,1-(index+1)/8],[0,1-(index+1)/8]];
+      for(const [vertex,point] of [0,1,2,0,2,3].entries()){mesh.data[start+vertex*12+7]=uv[point][0];mesh.data[start+vertex*12+8]=uv[point][1];}
+    };
+    for(const [i,{spec,x,z}] of STATIONS.entries()){
+      const y=i*128,side=Math.sign(x);c.fillStyle=spec.color;c.fillRect(0,y+14,5,100);c.fillStyle='#d2dfe5';c.font='600 48px sans-serif';c.fillText(spec.name.toUpperCase(),29,y+58);c.fillStyle='#6c899c';c.font='22px sans-serif';c.fillText(spec.role.toUpperCase(),31,y+99);
+      // Outboard wall plates face into the aisle. Nearby the text is legible;
+      // farther away the locator/shape remains useful without label clutter.
+      const px=x+side*2.48;quad([[px,2.95,z-side*1.15],[px,2.95,z+side*1.15],[px,2.66,z+side*1.15],[px,2.66,z-side*1.15]],i);
+    }
+    c.fillStyle='#bc4a5b';c.fillRect(0,6*128+14,5,100);c.fillStyle='#d0dbe1';c.font='600 46px sans-serif';c.fillText('DRACO / OBSERVATORY',30,6*128+58);c.fillStyle='#6c899c';c.font='22px sans-serif';c.fillText('LOCAL OPERATING SPACE',31,6*128+99);
+    quad([[-1.55,3.03,9.70],[1.55,3.03,9.70],[1.55,2.64,9.70],[-1.55,2.64,9.70]],6);
+    c.fillStyle='#a23a4d';c.fillRect(0,7*128+14,5,100);c.fillStyle='#ccd9df';c.font='600 46px sans-serif';c.fillText('DRACO / OPERATING DECK',30,7*128+58);c.fillStyle='#6c899c';c.font='22px sans-serif';c.fillText('OBSERVATION / COMMUNICATION',31,7*128+99);
+    quad([[-2.2,4.10,-9.78],[2.2,4.10,-9.78],[2.2,3.79,-9.78],[-2.2,3.79,-9.78]],7);
+    mesh.faces.length=0;return {canvas,mesh};
   }
   function buildActor(spec){
     const m=new Mesh(),silver='#a1b6c2',steel='#526b7b',dark='#162c3c',edge='#cfdee3',accent=spec.color;
@@ -189,7 +318,7 @@
     constructor(canvas,{select,zoomChanged,onFrame,onTarget}={}){
       Object.assign(this,{canvas,select,zoomChanged,onFrame,onTarget,width:1,height:1,dpr:1,dprLimit:2,fps:60,zoom:1,pan:{x:0,y:0},yaw:SPAWN.yaw,pitch:SPAWN.pitch,rows:new Map(),actors:new Map(),selected:'atlas',active:false,live:false,motion:true,frame:0,dirty:false,clock:0,previous:0,lastDraw:0,pointers:new Map(),hits:[],sprites:new Map(),textures:new Map(),lost:false,destroyed:false});
       this.lookSensitivity=1;this.actorMeshes=new Map(SPECS.map(spec=>[spec.id,buildActor(spec)]));this.actorBuffers=new Map();this.selectionMeshes=new Map(SPECS.map(spec=>{const mesh=new Mesh();mesh.ring(0,.011,0,.75,spec.color,.022,.85,-.4,1.2);return [spec.id,mesh];}));this.selectionBuffers=new Map();this.handMeshes=[buildLocalHand(-1),buildLocalHand(1)];this.handBuffers=[];this.focused=null;this.player={x:SPAWN.x,z:SPAWN.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS};this.movement={x:0,z:0};this.keys=new Set();this.target=null;this.targetSignature='';this.fov=1.22;
-      this.performance={draws:0,resizes:0,drawMs:[],frameMs:[],meshBuilds:1};this.mesh=buildShip();
+      this.performance={draws:0,resizes:0,drawMs:[],frameMs:[],meshBuilds:1};this.mesh=buildShip();this.stationSigns=buildStationSigns();
       try{this.gl=canvas.getContext('webgl',{alpha:false,antialias:true,powerPreference:'low-power',preserveDrawingBuffer:false});if(this.gl)this.initGL();}catch{
         // A failed GPU initialization must not abort the app's communication UI.
         try{this.gl?.getExtension('WEBGL_lose_context')?.loseContext();}catch{}
@@ -212,8 +341,8 @@
       // Retained normals are lit per vertex. Smooth agent meshes interpolate
       // highlights, while the fullscreen fragment path stays inexpensive on a
       // phone: no per-pixel normalisation, powers, distance or material branch.
-      const v=shader(g.VERTEX_SHADER,'attribute vec3 p;attribute vec4 c;attribute vec2 uv;attribute vec3 normal;uniform mat4 vp;uniform mat4 model;uniform vec3 eye;uniform bool polished;varying vec4 col;varying vec2 tex;varying float fog;void main(){vec4 world=model*vec4(p,1.);gl_Position=vp*world;col=c;tex=uv;vec3 n=mat3(model)*normal;float len=length(n);if(len>.1){n/=len;vec3 view=normalize(eye-world.xyz);if(dot(n,view)<0.)n=-n;vec3 key=normalize(vec3(-.35,.88,.32));vec3 fill=normalize(vec3(.78,.36,-.55));float diffuse=.40+.50*max(dot(n,key),0.)+.16*max(dot(n,fill),0.);col.rgb*=diffuse;if(polished){float spec=pow(max(dot(n,normalize(key+view)),0.),38.)*.24;float rim=pow(1.-max(dot(n,view),0.),3.)*.12;col.rgb+=vec3(.72,.86,.94)*(spec+rim);}}fog=clamp((distance(eye,world.xyz)-5.)/28.,0.,.42);}');
-      const f=shader(g.FRAGMENT_SHADER,'precision mediump float;varying vec4 col;varying vec2 tex;varying float fog;uniform sampler2D sprite;uniform bool textured;uniform float visibility;void main(){vec4 c=col;if(textured)c*=texture2D(sprite,tex);gl_FragColor=vec4(mix(c.rgb*visibility,vec3(.075,.12,.16),fog),c.a);}');
+      const v=shader(g.VERTEX_SHADER,'attribute vec3 p;attribute vec4 c;attribute vec2 uv;attribute vec3 normal;uniform mat4 vp;uniform mat4 model;uniform vec3 eye;uniform bool polished;varying vec4 col;varying vec2 tex;varying float fog;void main(){vec4 world=model*vec4(p,1.);gl_Position=vp*world;col=c;tex=uv;vec3 n=mat3(model)*normal;float len=length(n);if(len>.1){n/=len;vec3 view=normalize(eye-world.xyz);if(dot(n,view)<0.)n=-n;vec3 key=normalize(vec3(-.35,.88,.32));vec3 fill=normalize(vec3(.78,.36,-.55));float diffuse=.40+.50*max(dot(n,key),0.)+.16*max(dot(n,fill),0.);col.rgb*=diffuse;if(polished){float spec=pow(max(dot(n,normalize(key+view)),0.),38.)*.24;float rim=pow(1.-max(dot(n,view),0.),3.)*.12;col.rgb+=vec3(.72,.86,.94)*(spec+rim);}}fog=clamp((distance(eye,world.xyz)-7.)/42.,0.,.26);}');
+      const f=shader(g.FRAGMENT_SHADER,'precision mediump float;varying vec4 col;varying vec2 tex;varying float fog;uniform sampler2D sprite;uniform bool textured;uniform float visibility;void main(){vec4 c=col;if(textured)c*=texture2D(sprite,tex);gl_FragColor=vec4(mix(c.rgb*visibility,vec3(.027,.042,.065),fog),c.a);}');
       this.program=g.createProgram();g.attachShader(this.program,v);g.attachShader(this.program,f);g.linkProgram(this.program);if(!g.getProgramParameter(this.program,g.LINK_STATUS))throw Error('Spatial program link failed');g.deleteShader(v);g.deleteShader(f);g.useProgram(this.program);
       const backgroundVertex=shader(g.VERTEX_SHADER,'attribute vec2 p;varying vec2 pos;void main(){pos=p;gl_Position=vec4(p,0.,1.);}');
       const backgroundFragment=shader(g.FRAGMENT_SHADER,'precision mediump float;varying vec2 pos;void main(){vec2 q=pos*vec2(.8,.65);float glow=exp(-dot(q,q)*2.4);vec3 c=mix(vec3(.005,.012,.020),vec3(.035,.075,.096),glow);c*=1.-.25*max(0.,-pos.y);gl_FragColor=vec4(c,1.);}');
@@ -229,6 +358,8 @@
       this.actorBuffers.clear();for(const [id,mesh] of this.actorMeshes){const buffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,buffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(mesh.data),g.STATIC_DRAW);this.actorBuffers.set(id,buffer);}
       this.handBuffers=this.handMeshes.map(mesh=>{const buffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,buffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(mesh.data),g.STATIC_DRAW);return buffer;});
       this.selectionBuffers.clear();for(const [id,mesh] of this.selectionMeshes){const buffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,buffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(mesh.data),g.STATIC_DRAW);this.selectionBuffers.set(id,buffer);}
+      this.signBuffer=g.createBuffer();g.bindBuffer(g.ARRAY_BUFFER,this.signBuffer);g.bufferData(g.ARRAY_BUFFER,new Float32Array(this.stationSigns.mesh.data),g.STATIC_DRAW);
+      this.signTexture=g.createTexture();g.bindTexture(g.TEXTURE_2D,this.signTexture);g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL,true);g.texImage2D(g.TEXTURE_2D,0,g.RGBA,g.RGBA,g.UNSIGNED_BYTE,this.stationSigns.canvas);g.generateMipmap(g.TEXTURE_2D);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MIN_FILTER,g.LINEAR_MIPMAP_LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MAG_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_S,g.CLAMP_TO_EDGE);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_T,g.CLAMP_TO_EDGE);
       g.enable(g.DEPTH_TEST);g.enable(g.BLEND);g.blendFunc(g.SRC_ALPHA,g.ONE_MINUS_SRC_ALPHA);g.clearColor(.018,.018,.028,1);
     }
     bindBuffer(buffer){const g=this.gl;g.bindBuffer(g.ARRAY_BUFFER,buffer);for(const [name,size,offset] of [['p',3,0],['c',4,12],['uv',2,28],['normal',3,36]]){g.enableVertexAttribArray(this.locations[name]);g.vertexAttribPointer(this.locations[name],size,g.FLOAT,false,48,offset);}}
@@ -265,7 +396,22 @@
     framingPoints(){return [[-ROOM.halfWidth,0,-ROOM.halfDepth],[ROOM.halfWidth,ROOM.height,ROOM.halfDepth],...STATIONS.flatMap(({x,z})=>[[x,.94,z],[x,.94+ACTOR_HEIGHT,z]])];}
     frameCamera(aspect){const eye=[this.player.x,EYE_HEIGHT,this.player.z],cp=Math.cos(this.pitch),forward=[Math.sin(this.yaw)*cp,Math.sin(this.pitch),-Math.cos(this.yaw)*cp],camera=cameraMatrix(eye,eye.map((v,i)=>v+forward[i]),aspect,this.fov/this.zoom);this.eye=eye;this.forward=forward;this.cameraRight=camera.right;this.cameraUp=camera.up;return {...camera,right:[Math.cos(this.yaw),0,Math.sin(this.yaw)],up:[0,1,0]};}
     pick(x=this.width/2,y=this.height/2){if(!this.vp||!this.eye)return null;const t=Math.tan(this.fov/this.zoom/2),nx=(x/this.width*2-1)*this.width/this.height*t,ny=(1-y/this.height*2)*t,ray=norm(this.forward.map((v,i)=>v+this.cameraRight[i]*nx+this.cameraUp[i]*ny)),normal=[Math.sin(this.yaw),0,-Math.cos(this.yaw)],den=dot(ray,normal);if(Math.abs(den)<.0001)return null;let best=null;
-      for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),distance=dot(sub([p.x,p.y,p.z],this.eye),normal)/den;if(distance<.1||distance>24)continue;const hit=this.eye.map((v,j)=>v+ray[j]*distance),side=dot(sub(hit,[p.x,p.y,p.z]),this.right);if(Math.abs(side)>ACTOR_WIDTH*.43||hit[1]<p.y+.06||hit[1]>p.y+ACTOR_HEIGHT*.94)continue;if(!best||distance<best.distance)best={id:s.id,agent:s.id,distance,near:Math.hypot(p.x-this.player.x,p.z-this.player.z)<=3.5};}return best;}
+      for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),distance=dot(sub([p.x,p.y,p.z],this.eye),normal)/den;if(distance<.1||distance>24)continue;const hit=this.eye.map((v,j)=>v+ray[j]*distance),side=dot(sub(hit,[p.x,p.y,p.z]),this.right);if(Math.abs(side)>ACTOR_WIDTH*.43||hit[1]<p.y+.06||hit[1]>p.y+ACTOR_HEIGHT*.94)continue;if(!best||distance<best.distance)best={id:s.id,agent:s.id,distance,near:Math.hypot(p.x-this.player.x,p.z-this.player.z)<=3.5};}
+      // The actual console is an interaction surface too. Selecting equipment
+      // uses the same recipient/focus callback as its creature, not a second
+      // composer, transport or simulated action. Explicit selection still wins.
+      for(const {spec,x:sx,z:sz} of STATIONS){
+        const side=Math.sign(sx),bounds=[[sx+side*.86-.08,sx+side*.86+.08],[.94,1.83],[sz-.97,sz+.97]];
+        let entry=.1,exit=24;
+        for(let axis=0;axis<3;axis++){
+          const [min,max]=bounds[axis],direction=ray[axis],origin=this.eye[axis];
+          if(Math.abs(direction)<.00001){if(origin<min||origin>max){exit=-1;break;}continue;}
+          const a=(min-origin)/direction,b=(max-origin)/direction;entry=Math.max(entry,Math.min(a,b));exit=Math.min(exit,Math.max(a,b));
+        }
+        if(entry>exit||entry<.1||exit<.1||best&&entry>=best.distance)continue;
+        best={id:spec.id,agent:spec.id,distance:entry,near:Math.hypot(sx-this.player.x,sz-this.player.z)<=3.5,surface:'station'};
+      }
+      return best;}
     interactionTarget(){
       // An explicit menu/body selection is not a gaze hit. A nearer creature
       // must not steal its conversation before the next frame or occlude it
@@ -317,7 +463,7 @@
     texture(spec){const g=this.gl;if(this.textures.has(spec.id))return this.textures.get(spec.id);const t=g.createTexture();g.bindTexture(g.TEXTURE_2D,t);g.pixelStorei(g.UNPACK_FLIP_Y_WEBGL,true);g.texImage2D(g.TEXTURE_2D,0,g.RGBA,g.RGBA,g.UNSIGNED_BYTE,this.actorSprite(spec));g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MIN_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_MAG_FILTER,g.LINEAR);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_S,g.CLAMP_TO_EDGE);g.texParameteri(g.TEXTURE_2D,g.TEXTURE_WRAP_T,g.CLAMP_TO_EDGE);this.textures.set(spec.id,t);return t;}
     drawGL(){const g=this.gl,identity=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);g.viewport(0,0,this.canvas.width,this.canvas.height);g.clear(g.COLOR_BUFFER_BIT|g.DEPTH_BUFFER_BIT);g.disable(g.DEPTH_TEST);g.disable(g.BLEND);g.useProgram(this.backgroundProgram);g.bindBuffer(g.ARRAY_BUFFER,this.backgroundBuffer);g.enableVertexAttribArray(this.backgroundLocation);g.vertexAttribPointer(this.backgroundLocation,2,g.FLOAT,false,8,0);g.drawArrays(g.TRIANGLES,0,3);g.enable(g.DEPTH_TEST);g.disable(g.BLEND);g.depthMask(true);g.useProgram(this.program);g.uniformMatrix4fv(this.locations.vp,false,this.vp);g.uniformMatrix4fv(this.locations.model,false,identity);g.uniform3fv(this.locations.eye,this.eye);g.uniform1f(this.locations.visibility,1);g.uniform1i(this.locations.textured,0);g.uniform1i(this.locations.polished,0);this.bindBuffer(this.staticBuffer);g.drawArrays(g.TRIANGLES,0,this.opaqueVertices);g.enable(g.BLEND);g.depthMask(false);this.bindBuffer(this.alphaBuffer);g.drawArrays(g.TRIANGLES,0,this.alphaVertices);
       const selectedIndex=SPECS.findIndex(s=>s.id===this.selected);if(selectedIndex>=0){const p=this.actorPosition(null,selectedIndex),model=identity.slice();model[12]=p.x;model[13]=.94;model[14]=p.z;g.uniformMatrix4fv(this.locations.model,false,model);this.bindBuffer(this.selectionBuffers.get(this.selected));g.drawArrays(g.TRIANGLES,0,this.selectionMeshes.get(this.selected).data.length/12);}
-      g.depthMask(true);g.disable(g.BLEND);g.uniform1i(this.locations.polished,1);
+      g.depthMask(true);g.disable(g.BLEND);g.uniformMatrix4fv(this.locations.model,false,identity);g.uniform1i(this.locations.textured,1);g.bindTexture(g.TEXTURE_2D,this.signTexture);this.bindBuffer(this.signBuffer);g.drawArrays(g.TRIANGLES,0,this.stationSigns.mesh.data.length/12);g.uniform1i(this.locations.textured,0);g.uniform1i(this.locations.polished,1);
       // Opaque retained 3D bodies write depth normally. A side step changes the
       // silhouette and occlusion; no camera-facing art is used on the GPU path.
       for(const [i,spec] of SPECS.entries()){
@@ -351,8 +497,8 @@
     updateLabels(){this.hits=[];for(const [i,s] of SPECS.entries()){const p=this.actorPosition(null,i),centre=this.project([p.x,p.y+ACTOR_HEIGHT*.5,p.z]),label=this.project([p.x,p.y+ACTOR_HEIGHT+.14,p.z]),el=this.labelNodes.get(s.id),distance=Math.hypot(p.x-this.player.x,p.z-this.player.z);const visible=label.depth>.15&&label.x>20&&label.x<this.width-20&&label.y>12&&label.y<this.height-12&&distance<19;el.hidden=!visible;el.classList.toggle('selected',s.id===this.selected);el.dataset.status=this.actors.get(s.id)?.status||'unknown';const transform=`translate(${label.x.toFixed(1)}px,${label.y.toFixed(1)}px)`;if(el.style.transform!==transform)el.style.transform=transform;if(centre.depth>.15)this.hits.push({id:s.id,x:centre.x,y:centre.y,w:Math.max(30,ACTOR_WIDTH*centre.s*this.height),h:Math.max(35,ACTOR_HEIGHT*centre.s*this.height),depth:centre.depth});}
       this.target=this.pick();const target=this.target?{...this.target,distance:Math.round(this.target.distance*10)/10}:null,signature=JSON.stringify(target);if(signature!==this.targetSignature){this.targetSignature=signature;this.onTarget?.(target||{agent:null,id:null,near:false,distance:null});}}
     projectedBounds(){const points=this.framingPoints().map(p=>this.project(p)).filter(p=>p.depth>.1);if(!points.length)return null;return {left:Math.min(...points.map(p=>p.x)),top:Math.min(...points.map(p=>p.y)),right:Math.max(...points.map(p=>p.x)),bottom:Math.max(...points.map(p=>p.y)),labels:[...this.labelNodes.values()].filter(el=>!el.hidden).length};}
-    diagnostics(){const p=(a)=>a.length?Math.round(a.slice().sort((a,b)=>a-b)[Math.floor((a.length-1)*.95)]*100)/100:null,nearby=STATIONS.map(station=>({agent:station.spec.id,distance:Math.round(Math.hypot(station.x-this.player.x,station.z-this.player.z)*10)/10})).sort((a,b)=>a.distance-b.distance).filter(agent=>agent.distance<=3.5);return {renderer:this.gl?'webgl-first-person':'canvas-first-person-fallback',mode:'first-person',active:this.active,reading:this.reading===true,live:this.live,motion:this.motion,contextLost:this.lost,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,lookSensitivity:this.lookSensitivity,focused:this.focused,projectedBounds:this.vp?this.projectedBounds():null,player:{x:this.player.x,z:this.player.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS,yaw:this.yaw,pitch:this.pitch,speed:WALK_SPEED,collision:this.canStand(this.player.x,this.player.z)?'clear':'blocked',movement:this.movementVector()},camera:{yaw:this.yaw,pitch:this.pitch,x:this.player.x,y:EYE_HEIGHT,z:this.player.z},room:{width:ROOM.halfWidth*2,depth:ROOM.halfDepth*2,height:ROOM.height},target:this.interactionTarget(),nearby,draws:this.performance.draws,pendingPaint:this.dirty,deferredResize:!!this.resizePending,pendingFrame:!!this.frame,resizes:this.performance.resizes,meshBuilds:this.performance.meshBuilds,triangles:this.mesh.data.length/36,actorGeometry:this.gl?'retained-solid-3d':'compatibility-billboards',localBody:this.gl?'solid-3d-gloves':'css-fallback',actorTriangles:[...this.actorMeshes.values()].reduce((n,m)=>n+m.data.length/36,0),localBodyTriangles:this.handMeshes.reduce((n,m)=>n+m.data.length/36,0),softwareTriangles:this.softwareMesh?this.softwareMesh.data.length/36:null,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,sampleLimit:120,drawCpuP95Ms:p(this.performance.drawMs),rafIntervalP95Ms:p(this.performance.frameMs),scope:'Local navigation and recent WebView CPU/RAF intervals; not agent travel, productive work, GPU presentation or native-chat frame timing'};}
-    destroy(){this.show(false);this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);window.removeEventListener('keydown',this.onKeyDown);window.removeEventListener('keyup',this.onKeyUp);window.removeEventListener('blur',this.onBlur);this.labels.remove();this.notice.remove();const g=this.gl;if(g){for(const t of this.textures.values())g.deleteTexture(t);for(const b of this.actorBuffers.values())g.deleteBuffer(b);for(const b of this.handBuffers)g.deleteBuffer(b);for(const b of this.selectionBuffers.values())g.deleteBuffer(b);g.deleteBuffer(this.staticBuffer);g.deleteBuffer(this.alphaBuffer);g.deleteBuffer(this.backgroundBuffer);g.deleteProgram(this.program);g.deleteProgram(this.backgroundProgram);}}
+    diagnostics(){const p=(a)=>a.length?Math.round(a.slice().sort((a,b)=>a-b)[Math.floor((a.length-1)*.95)]*100)/100:null,nearby=STATIONS.map(station=>({agent:station.spec.id,distance:Math.round(Math.hypot(station.x-this.player.x,station.z-this.player.z)*10)/10})).sort((a,b)=>a.distance-b.distance).filter(agent=>agent.distance<=3.5);return {renderer:this.gl?'webgl-first-person':'canvas-first-person-fallback',mode:'first-person',active:this.active,reading:this.reading===true,live:this.live,motion:this.motion,contextLost:this.lost,targetFps:this.fps,width:this.width,height:this.height,dpr:this.dpr,zoom:this.zoom,lookSensitivity:this.lookSensitivity,focused:this.focused,projectedBounds:this.vp?this.projectedBounds():null,player:{x:this.player.x,z:this.player.z,eyeHeight:EYE_HEIGHT,radius:PLAYER_RADIUS,yaw:this.yaw,pitch:this.pitch,speed:WALK_SPEED,collision:this.canStand(this.player.x,this.player.z)?'clear':'blocked',movement:this.movementVector()},camera:{yaw:this.yaw,pitch:this.pitch,x:this.player.x,y:EYE_HEIGHT,z:this.player.z},room:{width:ROOM.halfWidth*2,depth:ROOM.halfDepth*2,height:ROOM.height},target:this.interactionTarget(),nearby,draws:this.performance.draws,pendingPaint:this.dirty,deferredResize:!!this.resizePending,pendingFrame:!!this.frame,resizes:this.performance.resizes,meshBuilds:this.performance.meshBuilds,triangles:(this.mesh.data.length+this.stationSigns.mesh.data.length)/36,actorGeometry:this.gl?'retained-solid-3d':'compatibility-billboards',localBody:this.gl?'solid-3d-gloves':'css-fallback',actorTriangles:[...this.actorMeshes.values()].reduce((n,m)=>n+m.data.length/36,0),localBodyTriangles:this.handMeshes.reduce((n,m)=>n+m.data.length/36,0),softwareTriangles:this.softwareMesh?this.softwareMesh.data.length/36:null,drawSamples:this.performance.drawMs.length,frameSamples:this.performance.frameMs.length,sampleLimit:120,drawCpuP95Ms:p(this.performance.drawMs),rafIntervalP95Ms:p(this.performance.frameMs),scope:'Local navigation and recent WebView CPU/RAF intervals; not agent travel, productive work, GPU presentation or native-chat frame timing'};}
+    destroy(){this.show(false);this.destroyed=true;this.observer.disconnect();document.removeEventListener('visibilitychange',this.onVisibility);window.removeEventListener('keydown',this.onKeyDown);window.removeEventListener('keyup',this.onKeyUp);window.removeEventListener('blur',this.onBlur);this.labels.remove();this.notice.remove();const g=this.gl;if(g){for(const t of this.textures.values())g.deleteTexture(t);for(const b of this.actorBuffers.values())g.deleteBuffer(b);for(const b of this.handBuffers)g.deleteBuffer(b);for(const b of this.selectionBuffers.values())g.deleteBuffer(b);g.deleteBuffer(this.staticBuffer);g.deleteBuffer(this.alphaBuffer);g.deleteBuffer(this.backgroundBuffer);g.deleteBuffer(this.signBuffer);g.deleteTexture(this.signTexture);g.deleteProgram(this.program);g.deleteProgram(this.backgroundProgram);}}
     actorSprite(spec){
       const key=[spec.id,spec.kind,spec.color,this.dprLimit].join(':');if(this.sprites.has(key))return this.sprites.get(key);
       // Code-native vector drawing cached at device quality; no downloaded artwork or

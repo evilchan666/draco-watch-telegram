@@ -2,6 +2,7 @@ package org.omega.dracowatch;
 
 import android.app.AlertDialog;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Canvas;
@@ -13,6 +14,7 @@ import android.graphics.RectF;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.RippleDrawable;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.SpannableString;
@@ -21,7 +23,9 @@ import android.text.style.ForegroundColorSpan;
 import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -100,6 +104,7 @@ public final class TelegramSurface extends FrameLayout {
 
     private final Actions actions;
     private final LinearLayout shell;
+    private final FrameLayout worldHandle;
     private final LinearLayout header;
     private final LinearLayout heading;
     private final ImageView backButton;
@@ -175,6 +180,10 @@ public final class TelegramSurface extends FrameLayout {
     private boolean replacingRows;
     private boolean followLive = true;
     private boolean seekingAudio;
+    private JSONObject handleScope;
+    private float handleDownX, handleDownY;
+    private boolean handleExpanded, handleMoved;
+    private int handleOrientation;
 
     public TelegramSurface(Context context, Actions actions) {
         super(context);
@@ -191,6 +200,23 @@ public final class TelegramSurface extends FrameLayout {
         shell.setClickable(true);
         shell.setBackgroundColor(BACKGROUND);
         addView(shell, new FrameLayout.LayoutParams(-1, -1));
+
+        // Only this dedicated handle owns panel dragging. Timeline scrolling,
+        // swipe-to-reply and the editor never compete for a sheet gesture.
+        worldHandle = new FrameLayout(context);
+        worldHandle.setTag("world-conversation-handle");
+        worldHandle.setFocusable(true);
+        worldHandle.setClickable(true);
+        worldHandle.setVisibility(GONE);
+        worldHandle.setOnClickListener(v -> {
+            if (worldDock && !constrainedIme) expandWorldConversation(scope(), !worldExpanded);
+        });
+        worldHandle.setOnTouchListener((v, event) -> dragWorldConversation(event));
+        View grip = new View(context);
+        grip.setBackground(round(0xff65656b, 3));
+        grip.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        worldHandle.addView(grip, new FrameLayout.LayoutParams(dp(36), dp(4), Gravity.CENTER));
+        shell.addView(worldHandle, new LinearLayout.LayoutParams(-1, dp(24)));
 
         header = vertical();
         header.setBackgroundColor(PANEL);
@@ -231,9 +257,7 @@ public final class TelegramSurface extends FrameLayout {
         worldExpand.setVisibility(GONE);
         worldExpand.setOnClickListener(v -> {
             if (!worldDock) return;
-            JSONObject value = new JSONObject();
-            try { value.put("expanded", !worldExpanded); } catch (JSONException ignored) { }
-            emit("worldExpand", value);
+            expandWorldConversation(scope(), !worldExpanded);
         });
         heading.addView(worldExpand, new LinearLayout.LayoutParams(dp(44), dp(44)));
 
@@ -440,6 +464,7 @@ public final class TelegramSurface extends FrameLayout {
         compose.addView(pending, new LinearLayout.LayoutParams(-1, -2));
 
         editor = horizontal();
+        editor.setGravity(Gravity.BOTTOM);
         editor.setPadding(dp(4), dp(4), dp(4), dp(4));
         compose.addView(editor, new LinearLayout.LayoutParams(-1, -2));
         imeRecipient = text(19, TEXT, true);
@@ -464,8 +489,9 @@ public final class TelegramSurface extends FrameLayout {
         input.setTextSize(16);
         baseTextSizes.put(input, 16f);
         input.setHint("Message");
-        input.setBackground(round(BACKGROUND, 20));
+        input.setBackground(round(PANEL_LIGHT, 22));
         input.setPadding(dp(12), dp(8), dp(12), dp(8));
+        input.setMinHeight(dp(44));
         input.setMinLines(1);
         input.setMaxLines(5);
         input.setMaxHeight(dp(112));
@@ -546,6 +572,7 @@ public final class TelegramSurface extends FrameLayout {
         visible = nextVisible;
         setVisibility(nextVisible ? VISIBLE : GONE);
         if (!nextVisible) {
+            resetWorldHandle(false);
             if (wasVisible) {
                 input.clearFocus();
                 InputMethodManager keyboard = (InputMethodManager) getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -571,6 +598,7 @@ public final class TelegramSurface extends FrameLayout {
             + value.optString("sessionKey") + ":" + value.optString("sessionId");
         boolean changedConversation = !nextIdentity.equals(identity);
         if (changedConversation) {
+            resetWorldHandle(false);
             identity = nextIdentity;
             pinPosition = 0;
             expanded.clear();
@@ -596,6 +624,7 @@ public final class TelegramSurface extends FrameLayout {
             && Boolean.TRUE.equals(value.opt("worldDock"));
         boolean nextWorldExpanded = nextWorldDock && Boolean.TRUE.equals(value.opt("worldExpanded"));
         if (worldDock != nextWorldDock || worldExpanded != nextWorldExpanded) {
+            resetWorldHandle(false);
             worldDock = nextWorldDock;
             worldExpanded = nextWorldExpanded;
             shell.setTag(worldDock ? "world-conversation-panel" : "telegram-conversation-panel");
@@ -632,6 +661,68 @@ public final class TelegramSurface extends FrameLayout {
         // Child bounds still describe the previous pass here. onMeasure owns
         // the resolved panel geometry and will update its chrome atomically.
         requestLayout();
+    }
+
+    private void expandWorldConversation(JSONObject origin, boolean expanded) {
+        if (!showing() || !worldDock || constrainedIme || !sameScope(origin) || expanded == worldExpanded) return;
+        withScope(origin, () -> emit("worldExpand", data("expanded", expanded)));
+    }
+
+    private void resetWorldHandle(boolean animate) {
+        handleScope = null;
+        handleMoved = false;
+        shell.animate().cancel();
+        if (animate && shell.getTranslationY() != 0) {
+            shell.animate().translationY(0).setDuration(150).start();
+        } else shell.setTranslationY(0);
+        worldHandle.setPressed(false);
+    }
+
+    private boolean dragWorldConversation(MotionEvent event) {
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
+            if (!showing() || !worldDock || constrainedIme) return false;
+            resetWorldHandle(false);
+            handleScope = scope();
+            handleExpanded = worldExpanded;
+            handleOrientation = getResources().getConfiguration().orientation;
+            handleDownX = event.getRawX();
+            handleDownY = event.getRawY();
+            worldHandle.setPressed(true);
+            return true;
+        }
+        if (handleScope == null) return false;
+        if (!showing() || !worldDock || constrainedIme || !sameScope(handleScope)
+            || handleExpanded != worldExpanded || handleOrientation != getResources().getConfiguration().orientation
+            || event.getPointerCount() != 1 || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            resetWorldHandle(false);
+            return true;
+        }
+        float delta = event.getRawY() - handleDownY;
+        float horizontal = event.getRawX() - handleDownX;
+        int slop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            if (Math.abs(horizontal) > slop && Math.abs(horizontal) > Math.abs(delta)) {
+                resetWorldHandle(true);
+                return true;
+            }
+            handleMoved |= Math.abs(delta) > slop;
+            // Preview only. The existing reducer receives one bound action on
+            // release, never a stream of resize or transport updates.
+            float preview = handleExpanded ? Math.max(0, delta) : Math.min(0, delta);
+            shell.setTranslationY(Math.max(-dp(72), Math.min(dp(72), preview * .55f)));
+            return true;
+        }
+        if (event.getActionMasked() == MotionEvent.ACTION_UP) {
+            JSONObject origin = handleScope;
+            boolean moved = handleMoved || Math.abs(delta) > slop;
+            boolean shouldSnap = handleExpanded ? delta >= dp(36) : delta <= -dp(36);
+            boolean expanded = !handleExpanded;
+            resetWorldHandle(true);
+            if (!moved) worldHandle.performClick();
+            else if (shouldSnap) expandWorldConversation(origin, expanded);
+            return true;
+        }
+        return true;
     }
 
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -678,6 +769,7 @@ public final class TelegramSurface extends FrameLayout {
 
     /** Configuration changes preserve the same native widgets and custody. */
     public void configurationChanged() {
+        resetWorldHandle(false);
         float scale = getResources().getConfiguration().fontScale;
         if (nativeFontScale != scale) {
             nativeFontScale = scale;
@@ -715,6 +807,10 @@ public final class TelegramSurface extends FrameLayout {
             placePinBanner();
             int color = chat ? agentColor(payload.optString("agent")) : ACCENT;
             header.setVisibility(constrainedIme ? GONE : VISIBLE);
+            worldHandle.setVisibility(worldDock && !constrainedIme ? VISIBLE : GONE);
+            worldHandle.setContentDescription(worldExpanded
+                ? "Conversation size. Drag down or double-tap to return to the world panel."
+                : "Conversation size. Drag up or double-tap to expand the conversation.");
             body.setVisibility(constrainedIme ? GONE : VISIBLE);
             shell.setGravity(constrainedIme ? Gravity.CENTER_VERTICAL : Gravity.TOP);
             imeRecipient.setVisibility(constrainedIme ? VISIBLE : GONE);
@@ -731,6 +827,8 @@ public final class TelegramSurface extends FrameLayout {
             if (chat) {
                 setText(title, payload.optString("name", "Agent conversation"));
                 title.setTextColor(color);
+                title.setContentDescription("Conversation recipient: " + payload.optString("name", "Agent")
+                    + ". Tap for work, state and history coverage.");
             } else if ("activity".equals(viewName)) {
                 setText(title, "Live activity");
                 title.setTextColor(TEXT);
@@ -743,7 +841,7 @@ public final class TelegramSurface extends FrameLayout {
             reply.setTextColor(color);
             input.setHighlightColor(withAlpha(color, 0x55));
             icon(send, "send", BACKGROUND);
-            send.setBackground(round(color, 14));
+            send.setBackground(ripple(ACCENT, 22, TEXT));
             jump.setBackground(outline(PANEL_LIGHT, 24, chat ? color : SELECTED));
             backButton.setVisibility(chat || !"chats".equals(viewName) ? VISIBLE : GONE);
             backButton.setContentDescription(worldDock ? "Close conversation" : "Back to agent conversations");
@@ -753,7 +851,8 @@ public final class TelegramSurface extends FrameLayout {
             footer.setVisibility(worldDock ? GONE : VISIBLE);
             runStop.setVisibility(chat ? VISIBLE : GONE);
             boolean durableStop = capability("durableStop");
-            setText(runStop, !capability("abort") ? "Stop unavailable" : durableStop ? "Stop & hold" : "Abort run");
+            if (worldDock) icon(runStop, "stop", capability("abort") ? WARNING : SECONDARY);
+            else setText(runStop, !capability("abort") ? "Stop unavailable" : durableStop ? "Stop & hold" : "Abort run");
             runStop.setContentDescription(!capability("abort") ? "Stop unavailable. No supported exact run target. Tap for details." : durableStop ? "Stop the exact run and hold automatic continuation until explicit release" : "Abort the exact run; automatic continuation may remain possible");
             runStop.setAlpha(capability("abort") ? 1 : .55f);
             backDrawable.setRotation(0, false);
@@ -761,9 +860,12 @@ public final class TelegramSurface extends FrameLayout {
             String live = payload.optBoolean("live") ? "Live" : "Not live · retained observations";
             setText(subtitle, live + " · " + state);
             subtitle.setContentDescription(live + " · " + state + ". Tap for complete state and coverage.");
-            subtitle.setVisibility(shortLayout ? GONE : VISIBLE);
+            // A dock must not silently lose its connection state just because
+            // its message area is shorter than a full-screen chat. Keep one
+            // quiet line; the full observation stays behind its existing tap.
+            subtitle.setVisibility(shortLayout && !worldDock ? GONE : VISIBLE);
             subtitle.setTextColor(payload.optBoolean("live") ? SECONDARY : WARNING);
-            setOptional(work, chat && !shortLayout ? "Work & coverage  ›" : "");
+            setOptional(work, chat && !worldDock && !shortLayout ? "Work & coverage  ›" : "");
             work.setMaxLines(1);
             history.setVisibility(GONE);
             work.setContentDescription(payload.optString("workSummary") + ". " + payload.optString("historyNote") + ". Tap for complete work and coverage details.");
@@ -2047,7 +2149,7 @@ public final class TelegramSurface extends FrameLayout {
         result.setMinHeight(dp(40));
         result.setMinimumHeight(dp(40));
         result.setPadding(dp(9), dp(5), dp(9), dp(5));
-        result.setBackground(round(Color.TRANSPARENT, 14));
+        result.setBackground(ripple(Color.TRANSPARENT, 14, TEXT));
         return result;
     }
 
@@ -2093,8 +2195,13 @@ public final class TelegramSurface extends FrameLayout {
                 paint.setStyle(Paint.Style.FILL);
                 canvas.drawRoundRect(new RectF(6, 6, 18, 18), 2, 2, paint);
             } else if ("attach".equals(kind)) {
-                canvas.drawLine(12, 4, 12, 20, paint);
-                canvas.drawLine(4, 12, 20, 12, paint);
+                Path path = new Path();
+                path.moveTo(8, 12); path.lineTo(14.5f, 5.5f);
+                path.cubicTo(19, 1, 25, 7, 20.5f, 11.5f);
+                path.lineTo(11, 21); path.cubicTo(5, 27, -3, 19, 3, 13);
+                path.lineTo(12.5f, 3.5f);
+                canvas.save(); canvas.translate(2, -1); canvas.scale(.83f, .83f);
+                canvas.drawPath(path, paint); canvas.restore();
             } else if ("microphone".equals(kind)) {
                 canvas.drawRoundRect(new RectF(8, 2, 16, 15), 4, 4, paint);
                 canvas.drawArc(new RectF(5, 6, 19, 19), 0, 180, false, paint);
@@ -2184,6 +2291,11 @@ public final class TelegramSurface extends FrameLayout {
         GradientDrawable result = round(fill, radius);
         result.setStroke(dp(1), stroke);
         return result;
+    }
+
+    private Drawable ripple(int fill, float radius, int highlight) {
+        return new RippleDrawable(ColorStateList.valueOf(withAlpha(highlight, 0x28)),
+            round(fill, radius), round(Color.WHITE, radius));
     }
 
     private int agentColor(String agentId) {

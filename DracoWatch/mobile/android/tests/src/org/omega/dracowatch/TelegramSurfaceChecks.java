@@ -498,6 +498,66 @@ public final class TelegramSurfaceChecks extends Instrumentation {
         sendPointerSync(MotionEvent.obtain(down,SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,geometry[2],geometry[1],0));SystemClock.sleep(450);waitForIdleSync();
         check(event(before,"reply")==null,"physical-session change during real swipe cannot retarget reply");
     }
+    private void handlePointer(View handle, long down, int action, float x, float y) throws Exception {
+        ui(() -> {
+            MotionEvent event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0);
+            try { handle.dispatchTouchEvent(event); } finally { event.recycle(); }
+            return null;
+        });
+    }
+
+    private void dockHandleCustody() throws Exception {
+        JSONObject model = base(true, "atlas").put("view", "environment")
+            .put("worldDock", true).put("worldExpanded", false)
+            .put("draft", "EXACT DOCKED DRAFT").put("replyLabel", "Reply to exact original report");
+        render(model);
+        View handle = requireTag("world-conversation-handle");
+        View shell = requireTag("world-conversation-panel");
+        EditText draft = (EditText) requireTag("telegram-draft");
+        check(ui(() -> handle.isShown()), "world conversation has its own dedicated drag handle");
+        check(ui(() -> requireTag("telegram-status").isShown()), "compact world panel retains its connection and observed-state line");
+        check(ui(() -> !requireTag("telegram-work-summary").isShown()), "world dock does not spend a second strip on duplicate coverage chrome");
+        check(ui(() -> ((TextView) requireTag("telegram-title")).getContentDescription().toString().contains("ATLAS")), "recipient remains explicitly accessible when its one-line title is ellipsized");
+        check(ui(() -> ((TextView) requireTag("telegram-stop-run")).getText().length() == 0), "dock Stop retains an accessible icon without squeezing the recipient with an unavailable debug label");
+        ui(() -> { draft.requestFocus(); draft.setSelection(2, 7); return null; });
+        int before = actions.size(); long down = SystemClock.uptimeMillis();
+        handlePointer(handle, down, MotionEvent.ACTION_DOWN, dp(100), dp(200));
+        handlePointer(handle, down, MotionEvent.ACTION_MOVE, dp(100), dp(150));
+        check(event(before, "worldExpand") == null, "panel preview emits no intermediate resize or transport actions");
+        handlePointer(handle, down, MotionEvent.ACTION_UP, dp(100), dp(150));
+        JSONObject expanded = event(before, "worldExpand");
+        check(exactScope(expanded, "atlas") && expanded.getJSONObject("data").optBoolean("expanded")
+            && actions.size() == before + 1, "handle release requests one exact-session expansion");
+        check(ui(() -> draft.getText().toString().equals("EXACT DOCKED DRAFT") && draft.getSelectionStart() == 2 && draft.getSelectionEnd() == 7), "resizing preserves the complete draft and text selection");
+        model.put("worldExpanded", true); render(model);
+        before = actions.size(); down = SystemClock.uptimeMillis();
+        handlePointer(handle, down, MotionEvent.ACTION_DOWN, dp(100), dp(100));
+        handlePointer(handle, down, MotionEvent.ACTION_MOVE, dp(100), dp(155));
+        handlePointer(handle, down, MotionEvent.ACTION_UP, dp(100), dp(155));
+        JSONObject collapsed = event(before, "worldExpand");
+        check(exactScope(collapsed, "atlas") && !collapsed.getJSONObject("data").optBoolean("expanded", true)
+            && actions.size() == before + 1, "downward release returns the same conversation to its world dock");
+        model.put("worldExpanded", false); render(model);
+        before = actions.size(); down = SystemClock.uptimeMillis();
+        handlePointer(handle, down, MotionEvent.ACTION_DOWN, dp(100), dp(200));
+        handlePointer(handle, down, MotionEvent.ACTION_MOVE, dp(100), dp(150));
+        JSONObject replacement = new JSONObject(model.toString()).put("sessionId", "physical-atlas-replacement");
+        render(replacement);
+        handlePointer(handle, down, MotionEvent.ACTION_UP, dp(100), dp(150));
+        check(event(before, "worldExpand") == null && ui(() -> shell.getTranslationY()) == 0,
+            "session replacement cancels a retained sheet gesture without retargeting or leaving translated chrome");
+        render(model); before = actions.size(); down = SystemClock.uptimeMillis();
+        handlePointer(handle, down, MotionEvent.ACTION_DOWN, dp(100), dp(200));
+        handlePointer(handle, down, MotionEvent.ACTION_MOVE, dp(100), dp(150));
+        handlePointer(handle, down, MotionEvent.ACTION_CANCEL, dp(100), dp(150));
+        check(event(before, "worldExpand") == null && ui(() -> shell.getTranslationY()) == 0,
+            "cancelled sheet gesture restores its position and dispatches nothing");
+        before = actions.size(); click(handle);
+        check(exactScope(event(before, "worldExpand"), "atlas"), "accessible handle click retains the same expansion action and scope");
+        render(base(true, "atlas"));
+        check(ui(() -> !handle.isShown()), "standalone conversation does not acquire a sheet gesture region");
+    }
+
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
@@ -505,6 +565,9 @@ public final class TelegramSurfaceChecks extends Instrumentation {
             check(activityField("profile").get(activity)==null,"target APK is unpaired; synthetic test cannot contact production");
             AccessibilityServiceInfo info=getUiAutomation().getServiceInfo();info.flags|=AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;getUiAutomation().setServiceInfo(info);
             ui(()->{surface=new TelegramSurface(activity,(action,data)->{try{actions.add(json("action",action,"data",new JSONObject(data.toString())));}catch(Exception error){throw new AssertionError(error);}});activity.setContentView(surface);return null;});
+            if(flag("dockOnly")){
+                dockHandleCustody();result.putString("stream","Dock handle native checks passed: "+checks+". Synthetic data, no network/input dispatch.\n");finish(0,result);return;
+            }
             if(flag("gesturesOnly")){
                 recyclerGestures();result.putString("stream","Recycler gestures passed: "+checks+". Synthetic data, no network/input dispatch.\n");finish(0,result);return;
             }

@@ -112,6 +112,7 @@ try{
   };
   const nativeReady=agent=>wait(`__lastRender?.chat===true&&__lastRender.agent===${JSON.stringify(agent)}&&__lastRender.sessionId===__sessions[${JSON.stringify(agent)}]&&__lastRender.can.voice&&__lastRender.can.attachments&&__lastRender.messages.some(row=>row.text.startsWith(${JSON.stringify('SYNTHETIC '+agent+' report')}))`);
   const select=async agent=>{
+    await evaluate("document.getElementById('world-crew').hidden&&document.getElementById('world-crew-toggle').click()");
     const point=await evaluate(`(()=>{const node=document.querySelector('.world-contact[data-agent=${JSON.stringify(agent)}]');node.scrollIntoView({block:'nearest',inline:'center',behavior:'instant'});const r=node.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;return {x,y,hit:document.elementFromPoint(x,y)?.closest('.world-contact')===node};})()`);
     assert.ok(point.hit,'Contact is actually reachable by touch: '+agent);
     await call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:point.x,y:point.y,id:1}]});
@@ -121,7 +122,23 @@ try{
   const unchanged=(a,b)=>Math.hypot(a.x-b.x,a.z-b.z)<.001&&Math.abs(a.yaw-b.yaw)<.001;
 
   await load('native');
-  await evaluate("document.getElementById('world-talk').click()");await nativeReady('atlas');
+  await evaluate("onDracoAppInfo({fontScale:1.5,versionName:'0.7.0',versionCode:28});onDracoUpdate({state:'ready',versionName:'0.8.0',versionCode:29})");
+  await check("document.getElementById('world-build').textContent==='v0.7.0'&&!document.getElementById('world-update-notice').hidden&&document.getElementById('world-update-notice').textContent.includes('not installed')",'Downloaded update never masquerades as the installed version');
+  await evaluate("document.getElementById('world-build').click()");
+  await check("document.getElementById('world-link-dialog').open&&document.querySelector('.world-link-facts').textContent.includes('build 28')&&document.querySelector('.world-link-facts').textContent.includes('0.8.0 downloaded')",'Device connection view separates running package from pending installation');
+  await evaluate("DracoWatch.back();onDracoUpdate({state:'current'});document.getElementById('world-crew-toggle').click()");
+  const crewBefore=await evaluate("[...document.querySelectorAll('.world-contact')].map(__rect)");
+  await evaluate("for(let i=0;i<12;i++)__emit('atlas')");
+  const crewAfter=await evaluate("[...document.querySelectorAll('.world-contact')].map(__rect)");
+  assert.deepEqual(crewAfter,crewBefore,'Repeated snapshots do not rearrange open agent targets');results.push({label:'Repeated snapshots do not rearrange open agent targets',passed:true});
+  await check("document.getElementById('world-crew-toggle').getAttribute('aria-expanded')==='true'&&document.querySelectorAll('.world-contact').length===6&&__requests.every(request=>request.method==='GET'||request.route==='/v1/diagnostics')",'Opening the six-agent tray is navigation only, never implicit input');
+  await evaluate("DracoWatch.back()");
+  await check("document.getElementById('world-crew').hidden&&__visible(__retainedCanvas)&&!__lastRender.chat",'Back dismisses the contact tray before leaving the world');
+  const initialTalk=await evaluate("document.getElementById('world-talk').textContent.replace('Talk to ','')");
+  await evaluate("document.getElementById('world-talk').click()");
+  await wait(`__lastRender?.chat===true&&__lastRender.name===${JSON.stringify(initialTalk)}`);
+  await check(`__lastRender.name===${JSON.stringify(initialTalk)}`,'Initial world Talk opens its displayed recipient, never a different default');
+  await select('atlas');await nativeReady('atlas');
   await check("__lastRender.worldDock===true&&__lastRender.world===true&&__lastRender.chat===true&&__lastRender.visible===true&&__lastRender.view==='environment'",'Talk publishes one retained-world native conversation, not a hidden-world chat route');
   await check("__visible(__retainedCanvas)&&__retainedCanvas===document.getElementById('environment-canvas')&&__environment.reading===true",'Talk retains original drawn canvas and disables exploration');
   const readingPose=await pose();
@@ -187,6 +204,8 @@ try{
 
   await evaluate("__action('worldExpand',{expanded:true})");await pause(80);
   await check("__lastRender.worldDock&&__lastRender.world&&__lastRender.chat&&__lastRender.worldExpanded===true&&__lastRender.agent==='atlas'&&__environment.reading===true",'Native expand keeps dock ownership and exploration suspended');
+  await evaluate("__action('worldExpand',{agent:'atlas',sessionId:'obsolete-session',expanded:false})");
+  await check("__lastRender.worldExpanded===true",'Queued old-session sheet gesture cannot resize the replacement conversation');
   await evaluate("__action('worldExpand',{expanded:false});__action('worldAgent',{agent:'daedalus'})");await nativeReady('daedalus');
   await check("__lastRender.worldDock&&__lastRender.world&&__lastRender.sessionId===__sessions.daedalus",'Native world-agent action is reduced to exact selected conversation');
   await evaluate("document.getElementById('world-workspace-explore').click()");await wait('__environment.active===true&&!__environment.reading');
@@ -205,7 +224,10 @@ try{
   // pixels and readable conversation at the same time.
   for(const spec of [{name:'portrait',width:412,height:840},{name:'landscape',width:840,height:412}]){
     await load('fallback',spec.width,spec.height);
-    await evaluate("document.getElementById('world-talk').click()");await wait("document.body.classList.contains('chat-open')&&document.getElementById('conversation-name').textContent==='ATLAS'");
+    await evaluate("onDracoAppInfo({fontScale:1,versionName:'0.8.0',versionCode:29});document.getElementById('display-scale').value='100';document.getElementById('display-scale').dispatchEvent(new Event('input'))");
+    await pause(150);await capture(spec.name+'-explore');
+    await evaluate("document.getElementById('display-scale').value='150';document.getElementById('display-scale').dispatchEvent(new Event('input'));onDracoAppInfo({fontScale:1.5,versionName:'0.8.0',versionCode:29})");
+    await select('atlas');await wait("document.body.classList.contains('chat-open')&&document.getElementById('conversation-name').textContent==='ATLAS'");
     await check("__visible(__retainedCanvas)&&__visible(document.getElementById('conversation-screen'))&&__visible(document.getElementById('draft'))&&__visible(document.querySelector('.world-workspace-bar'))&&__environment.reading===true",spec.name+': actual fallback conversation, composer, contacts and retained world coexist');
     const geometry=await evaluate(`(()=>{const conversation=__rect(document.getElementById('conversation-screen')),canvas=__rect(__retainedCanvas),draft=__rect(document.getElementById('draft')),explore=__rect(document.getElementById('world-workspace-explore'));const sample={world:0,chat:0};for(let x=12;x<innerWidth;x+=24)for(let y=12;y<innerHeight;y+=24){const node=document.elementFromPoint(x,y);if(node?.closest('#environment-stage'))sample.world++;if(node?.closest('#conversation-screen'))sample.chat++;}return {conversation,canvas,draft,explore,sample,width:innerWidth,height:innerHeight,overflow:document.body.scrollWidth>innerWidth+1};})()`);
     assert.ok(geometry.sample.world>=8&&geometry.sample.chat>=20&&!geometry.overflow,spec.name+': both workspace regions are actually exposed '+JSON.stringify(geometry));results.push({label:spec.name+': world and conversation both exposed without horizontal overflow',passed:true,geometry});

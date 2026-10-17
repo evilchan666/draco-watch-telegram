@@ -1,18 +1,16 @@
 {
-  "watchSource": "99e3dfd762b2cff156ddddd2ab5c6b10413403a8",
+  "watchSource": "c8f5c009948251d310b6aac1ca2fd72b3e0e695d",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
-  "versionName": "0.7.0",
-  "versionCode": 28,
-  "integration": "full existing native conversation retained in first-person workspace; native draft/file/outbox review; constrained IME composer",
+  "versionName": "0.8.0",
+  "versionCode": 29,
+  "integration": "Retained observatory operating space, fixed exact-recipient chooser, draggable native conversation sheet, actual installed build and connection diagnosis",
   "loginMigration": false,
-  "updaterPublished": true,
+  "updaterPublished": false,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
-    "version": "0.6.0",
-    "versionCode": 27,
-    "sha256": "7651deaff1129ed59669d603a242ca418e72b20f495fa0504b5a0217a40cfbe7"
+    "version": "0.7.0",
+    "versionCode": 28,
+    "sha256": "2fc9080ccc53582f47423569dce411d73b5a3c47c967758d2129110331684dad"
   },
-  "releaseState": "Published0.7.0/code28; authenticated full updater download verified; physical installation and acceptance unverified",
-  "pairedApkSha256": "2fc9080ccc53582f47423569dce411d73b5a3c47c967758d2129110331684dad",
-  "packagedForkSource": "14040179383f6ea252b18c351638826ca9d3720c"
+  "releaseState": "Candidate; Android verification pending"
 }
