@@ -5,12 +5,14 @@
   "versionCode": 29,
   "integration": "One operating shell: retained first-person observatory, single six-agent chooser, native conversation sheet, per-recipient custody and installed-build reporting",
   "loginMigration": false,
-  "updaterPublished": false,
+  "updaterPublished": true,
   "physicalAcceptance": "unverified",
   "preservedBaseline": {
     "version": "0.7.0",
     "versionCode": 28,
     "sha256": "2fc9080ccc53582f47423569dce411d73b5a3c47c967758d2129110331684dad"
   },
-  "releaseState": "Android retained-world, IME, recipient, native composer, offline connection and installer-result checks verified; not yet published"
+  "releaseState": "Archived as failed product delivery; discontinued by operator on 2026-10-17; retained 0.8.0 was published, not operator-accepted",
+  "projectStatus": "failed-discontinued",
+  "packagedForkSource": "c93c6617560d26c6a67882bf947b6bb0953f64fc"
 }
