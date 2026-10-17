@@ -13,6 +13,7 @@ public final class NativeChecks extends Instrumentation {
     private void rejects(Callable block,String label)throws Exception{boolean rejected=false;try{block.call();}catch(Exception ex){rejected=true;}check(rejected,label);}
     interface Callable {void call()throws Exception;}
     @Override public void onStart(){Bundle result=new Bundle();try{
+        if(args!=null&&Boolean.parseBoolean(args.getString("updaterOnly","false"))){installerResultChecks();result.putString("stream","Installer-result reconciliation checks passed: "+count+". Isolated preferences and synthetic receipts; no network, installer or package change.\n");finish(0,result);return;}
         try(InputStream input=getTargetContext().getAssets().open("www/environment.js")){byte[] prefix=new byte[64];check(input.read(prefix)>0,"spatial renderer packaged as a native local asset");}
         try(InputStream input=getTargetContext().getAssets().open("www/index.html")){ByteArrayOutputStream output=new ByteArrayOutputStream();byte[] buffer=new byte[4096];int n;while((n=input.read(buffer))!=-1)output.write(buffer,0,n);String html=output.toString("UTF-8");check(html.contains("environment.js")&&html.contains("data-view=\"environment\""),"packaged UI loads separate fifth Environment destination");}
         try(InputStream input=getTargetContext().getAssets().open("www/environment-bubbles.js")){byte[] prefix=new byte[64];check(input.read(prefix)>0,"public report bubble helper packaged as a native local asset");}
@@ -116,4 +117,33 @@ public final class NativeChecks extends Instrumentation {
         if(args!=null&&args.containsKey("wrongSigner")){File candidate=new File(args.getString("wrongSigner"));android.content.pm.PackageInfo parsed=getTargetContext().getPackageManager().getPackageArchiveInfo(candidate.getPath(),android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES);check(parsed!=null&&parsed.versionCode==3&&parsed.packageName.equals("org.omega.dracowatch"),"wrong-signer fixture otherwise valid");rejects(()->UpdateController.verifyArchive(getTargetContext(),candidate,3),"wrong signing certificate rejected");}
         result.putString("stream","Native checks passed: "+count+". No agent input/control; isolated fixture GETs only when explicitly requested.\n");finish(0,result);
     }catch(Throwable error){result.putString("stream","Native checks failed after "+count+": "+error.toString()+"\n");finish(1,result);}}
+
+    private void installerResultChecks()throws Exception{
+        check(DracoClient.loadProfile(getTargetContext())==null,"installer reconciliation fixture refuses a paired target");
+        MonitorActivity activity=(MonitorActivity)startActivitySync(new android.content.Intent().setClassName(getTargetContext().getPackageName(),"org.omega.dracowatch.MonitorActivity").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+        android.content.SharedPreferences prefs=getTargetContext().getSharedPreferences("native-installer-result-checks",android.content.Context.MODE_PRIVATE);
+        java.util.concurrent.ExecutorService workers=java.util.concurrent.Executors.newSingleThreadExecutor();workers.shutdown();
+        java.util.List<JSONObject> events=new java.util.ArrayList<>();UpdateController[] owner={null};
+        try{
+            prefs.edit().clear().putInt("sessionId",41).putLong("lastCheck",System.currentTimeMillis()).putString("manifest",new JSONObject().put("versionName","NOT THE RUNNING VERSION").put("versionCode",99999).toString()).commit();
+            runOnMainSync(()->owner[0]=new UpdateController(activity,workers,(name,value)->events.add(value),prefs));
+            runOnMainSync(()->check(UpdateReceiver.recordResult(prefs,android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED,41),"exact cancelled installer receipt is persisted"));waitForIdleSync();
+            check(events.size()==1&&"install-cancelled".equals(events.get(0).optString("state")),"foreground preference listener surfaces cancellation without a network check");
+            String actualVersion=getTargetContext().getPackageManager().getPackageInfo(getTargetContext().getPackageName(),0).versionName;
+            check(actualVersion.equals(events.get(0).optString("currentVersion")),"running version remains actual Android package metadata, not the offered update");
+            int[] repeated={0};runOnMainSync(()->{if(owner[0].reconcileInstallerResult())repeated[0]++;if(owner[0].reconcileInstallerResult())repeated[0]++;owner[0].check(false);});
+            check(repeated[0]==0&&events.size()==1,"already-consumed result is not emitted repeatedly or treated as a permanent automatic-check hold");
+            check(prefs.getInt("lastInstallStatus",-99)==android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED&&prefs.getInt("lastInstallSessionId",-1)==41,"reading and resume reconciliation preserve exact terminal status and session evidence");
+            runOnMainSync(()->{owner[0].close();owner[0]=new UpdateController(activity,workers,(name,value)->events.add(value),prefs);check(!owner[0].reconcileInstallerResult(),"consumed marker survives controller recreation without replaying the result");});
+            runOnMainSync(()->{UpdateController.clearInstallerResult(prefs);prefs.edit().putInt("sessionId",55).commit();});waitForIdleSync();
+            check(!prefs.contains("lastInstallStatus")&&prefs.contains("manifest"),"new install clears terminal state without erasing its candidate or result sequence");
+            check(!UpdateReceiver.recordResult(prefs,android.content.pm.PackageInstaller.STATUS_FAILURE_ABORTED,41)&&prefs.getInt("sessionId",-1)==55,"late receipt from a predecessor installer cannot clear or fail the active replacement session");
+            runOnMainSync(()->check(UpdateReceiver.recordResult(prefs,android.content.pm.PackageInstaller.STATUS_FAILURE,55),"replacement session persists its own terminal failure"));waitForIdleSync();
+            check(events.size()==2&&"install-failed".equals(events.get(1).optString("state")),"fresh attempt with the same failure family is a new one-shot terminal result");
+            check(!UpdateReceiver.recordResult(prefs,android.content.pm.PackageInstaller.STATUS_FAILURE,55),"duplicate exact terminal receipt is not surfaced again");
+            runOnMainSync(()->{owner[0].close();UpdateController.clearInstallerResult(prefs);prefs.edit().putInt("sessionId",77).commit();check(UpdateReceiver.recordResult(prefs,android.content.pm.PackageInstaller.STATUS_SUCCESS,77),"synthetic success receipt is retained while no owner is active");owner[0]=new UpdateController(activity,workers,(name,value)->events.add(value),prefs);check(owner[0].reconcileInstallerResult(),"resume surfaces a newly persisted terminal result before any automatic check");});waitForIdleSync();
+            check(events.size()==3&&"installed".equals(events.get(2).optString("state"))&&actualVersion.equals(events.get(2).optString("versionName"))&&actualVersion.equals(events.get(2).optString("currentVersion")),"synthetic success still reports the real running package, never the manifest version");
+            check(!UpdateReceiver.recordResult(prefs,android.content.pm.PackageInstaller.STATUS_PENDING_USER_ACTION,77),"pending Android consent is not mistaken for terminal installation evidence");
+        }finally{runOnMainSync(()->{if(owner[0]!=null)owner[0].close();activity.finish();});prefs.edit().clear().commit();workers.shutdownNow();}
+    }
 }

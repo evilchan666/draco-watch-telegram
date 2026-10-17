@@ -126,6 +126,10 @@ try{
   await check("document.getElementById('world-build').textContent==='v0.7.0'&&!document.getElementById('world-update-notice').hidden&&document.getElementById('world-update-notice').textContent.includes('not installed')",'Downloaded update never masquerades as the installed version');
   await evaluate("document.getElementById('world-build').click()");
   await check("document.getElementById('world-link-dialog').open&&document.querySelector('.world-link-facts').textContent.includes('build 28')&&document.querySelector('.world-link-facts').textContent.includes('0.8.0 downloaded')",'Device connection view separates running package from pending installation');
+  await evaluate("onDracoUpdate({state:'install-cancelled',versionName:'0.8.0',versionCode:29})");
+  await check("document.getElementById('world-build').textContent==='v0.7.0'&&document.getElementById('world-update-notice').hidden&&document.getElementById('world-link-install').hidden&&document.querySelector('.world-link-facts').textContent.includes('installation cancelled')",'Cancelled Android installation clears the pending-approval presentation without advancing installed identity');
+  await evaluate("onDracoUpdate({state:'installed',versionName:'0.8.0',versionCode:29})");
+  await check("document.getElementById('world-build').textContent==='v0.7.0'&&document.getElementById('world-update-notice').hidden",'Even installer success cannot replace running package metadata');
   await evaluate("DracoWatch.back();onDracoUpdate({state:'current'});document.getElementById('world-crew-toggle').click()");
   const crewBefore=await evaluate("[...document.querySelectorAll('.world-contact')].map(__rect)");
   await evaluate("for(let i=0;i<12;i++)__emit('atlas')");
@@ -159,7 +163,7 @@ try{
   await evaluate("__action('reply',{id:'report:atlas:0'});__action('pin',{id:'report:atlas:0'})");await pause(80);
   await check("__lastRender.replyLabel.length>0&&__lastRender.pins.some(pin=>pin.messageId==='report:atlas:0'&&pin.agent==='atlas'&&pin.sessionId===__sessions.atlas)",'Real reply and local-pin routes remain bound to the docked conversation');
 
-  await evaluate("__action('search',{text:'SYNTHETIC'});document.querySelector('.world-contact[data-agent=atlas]').click();document.getElementById('world-workspace-talk').click()");await pause(80);
+  await evaluate("__action('search',{text:'SYNTHETIC'});document.querySelector('.world-contact[data-agent=atlas]').click();document.getElementById('world-talk').click()");await pause(80);
   await check("__lastRender.replyLabel.length>0&&__lastRender.search==='SYNTHETIC'&&__lastRender.draft==='Unsent workspace draft for atlas'",'Reselecting current contact or Conversation preserves reply, search and draft');
   await evaluate("__action('replyClear',{id:'stale-message'})");await pause(40);
   await check("__lastRender.replyId==='report:atlas:0'",'Stale native clear cannot discard a different exact reply reference');
@@ -208,13 +212,15 @@ try{
   await check("__lastRender.worldExpanded===true",'Queued old-session sheet gesture cannot resize the replacement conversation');
   await evaluate("__action('worldExpand',{expanded:false});__action('worldAgent',{agent:'daedalus'})");await nativeReady('daedalus');
   await check("__lastRender.worldDock&&__lastRender.world&&__lastRender.sessionId===__sessions.daedalus",'Native world-agent action is reduced to exact selected conversation');
-  await evaluate("document.getElementById('world-workspace-explore').click()");await wait('__environment.active===true&&!__environment.reading');
+  await evaluate("DracoWatch.back()");await wait('__environment.active===true&&!__environment.reading');
   const explorePose=await pose();
   await call('Input.dispatchKeyEvent',{type:'keyDown',key:'w',code:'KeyW',windowsVirtualKeyCode:87});await pause(180);
   await call('Input.dispatchKeyEvent',{type:'keyUp',key:'w',code:'KeyW',windowsVirtualKeyCode:87});
-  assert.ok(!unchanged(explorePose,await pose()),'Explicit Explore restores local movement');results.push({label:'Explicit Explore restores local movement',passed:true});
-  await evaluate("document.getElementById('world-workspace-talk').click()");await nativeReady('daedalus');
-  await check("__environment.reading===true&&__lastRender.worldDock&&__lastRender.world",'Explicit Talk returns movement to guarded conversation mode');
+  assert.ok(!unchanged(explorePose,await pose()),'Closing the conversation restores local movement');results.push({label:'Closing the conversation restores local movement',passed:true});
+  const resumedTalkName=await evaluate("document.getElementById('world-talk').textContent.replace('Talk to ','')");
+  await evaluate("document.getElementById('world-talk').click()");await wait("__lastRender?.chat===true&&__lastRender.worldDock===true");
+  assert.equal(await evaluate('__lastRender.name'),resumedTalkName,'The single Talk action opens its displayed recipient after movement');
+  await check("__environment.reading===true&&__lastRender.worldDock&&__lastRender.world",'The single Talk action returns movement to guarded conversation mode');
 
   await evaluate("window.__nativeNotices=[];DracoNative.notifyTelegram=text=>__nativeNotices.push(text);__action('stop',{runId:'stale-notice-run'})");
   await check("__nativeNotices.length===1&&document.getElementById('toast').hidden===true",'Native conversation notice is delivered once without a second oversized web overlay');
@@ -229,7 +235,7 @@ try{
     await evaluate("document.getElementById('display-scale').value='150';document.getElementById('display-scale').dispatchEvent(new Event('input'));onDracoAppInfo({fontScale:1.5,versionName:'0.8.0',versionCode:29})");
     await select('atlas');await wait("document.body.classList.contains('chat-open')&&document.getElementById('conversation-name').textContent==='ATLAS'");
     await check("__visible(__retainedCanvas)&&__visible(document.getElementById('conversation-screen'))&&__visible(document.getElementById('draft'))&&__visible(document.querySelector('.world-workspace-bar'))&&__environment.reading===true",spec.name+': actual fallback conversation, composer, contacts and retained world coexist');
-    const geometry=await evaluate(`(()=>{const conversation=__rect(document.getElementById('conversation-screen')),canvas=__rect(__retainedCanvas),draft=__rect(document.getElementById('draft')),explore=__rect(document.getElementById('world-workspace-explore'));const sample={world:0,chat:0};for(let x=12;x<innerWidth;x+=24)for(let y=12;y<innerHeight;y+=24){const node=document.elementFromPoint(x,y);if(node?.closest('#environment-stage'))sample.world++;if(node?.closest('#conversation-screen'))sample.chat++;}return {conversation,canvas,draft,explore,sample,width:innerWidth,height:innerHeight,overflow:document.body.scrollWidth>innerWidth+1};})()`);
+    const geometry=await evaluate(`(()=>{const conversation=__rect(document.getElementById('conversation-screen')),canvas=__rect(__retainedCanvas),draft=__rect(document.getElementById('draft')),toolbar=__rect(document.querySelector('.world-top'));const sample={world:0,chat:0};for(let x=12;x<innerWidth;x+=24)for(let y=12;y<innerHeight;y+=24){const node=document.elementFromPoint(x,y);if(node?.closest('#environment-stage'))sample.world++;if(node?.closest('#conversation-screen'))sample.chat++;}return {conversation,canvas,draft,toolbar,sample,width:innerWidth,height:innerHeight,overflow:document.body.scrollWidth>innerWidth+1};})()`);
     assert.ok(geometry.sample.world>=8&&geometry.sample.chat>=20&&!geometry.overflow,spec.name+': both workspace regions are actually exposed '+JSON.stringify(geometry));results.push({label:spec.name+': world and conversation both exposed without horizontal overflow',passed:true,geometry});
     await check("(()=>{const r=__rect(document.getElementById('draft'));return r.width>=120&&r.height>=40&&r.x>=0&&r.right<=innerWidth+1&&r.y>=0&&r.bottom<=innerHeight+1;})()",spec.name+': enlarged-text full composer is visible within viewport');
     await capture(spec.name+'-text150-retained-conversation');
@@ -237,9 +243,9 @@ try{
       await select(agent);await wait(`document.getElementById('conversation-name').textContent===${JSON.stringify({'main':'Commander','forge':'FORGE','atlas':'ATLAS','aera-new':'Æra','vvv':'VVV','daedalus':'Daedalus'}[agent])}&&document.getElementById('conversation-list').textContent.includes(${JSON.stringify('SYNTHETIC '+agent+' report')})`);
       await check(`document.getElementById('conversation-list').textContent.includes(${JSON.stringify('SYNTHETIC '+agent+' report')})&&__visible(__retainedCanvas)&&__environment.reading===true`,spec.name+': fallback '+agent+' contact switches real history without replacing world');
     }
-    await evaluate("document.getElementById('draft').value='Fallback unsent DAEDALUS draft';document.getElementById('draft').dispatchEvent(new Event('input'));document.getElementById('world-workspace-explore').click()");await wait('__environment.active===true&&!__environment.reading');
-    await evaluate("document.getElementById('world-workspace-talk').click()");await wait("document.body.classList.contains('chat-open')&&__environment.reading===true");
-    await check("document.getElementById('draft').value==='Fallback unsent DAEDALUS draft'&&__retainedCanvas===document.getElementById('environment-canvas')&&__environment.performance.meshBuilds===__initialMeshBuilds",spec.name+': Explore/Talk retains unsent draft, canvas instance and scene geometry');
+    await evaluate("document.getElementById('draft').value='Fallback unsent DAEDALUS draft';document.getElementById('draft').dispatchEvent(new Event('input'));DracoWatch.back()");await wait('__environment.active===true&&!__environment.reading');
+    await evaluate("document.getElementById('world-talk').click()");await wait("document.body.classList.contains('chat-open')&&__environment.reading===true");
+    await check("document.getElementById('draft').value==='Fallback unsent DAEDALUS draft'&&__retainedCanvas===document.getElementById('environment-canvas')&&__environment.performance.meshBuilds===__initialMeshBuilds",spec.name+': Close/Talk retains unsent draft, canvas instance and scene geometry');
     await capture(spec.name+'-text150-returned-workspace');
   }
   await check("__requests.every(request=>request.method==='GET'||request.route==='/v1/diagnostics')",'Fallback UI navigation causes no model input or audio requests');

@@ -83,12 +83,12 @@ public final class TelegramSurface extends FrameLayout {
 
     // Match Watch's original black/red shell, not Telegram's default blue/green.
     // Agent identity accents are supplied by the same Watch roster as the world.
-    private static final int BACKGROUND = 0xff000000;
-    private static final int PANEL = 0xff101010;
-    private static final int PANEL_LIGHT = 0xff202020;
-    private static final int INCOMING = 0xff151515;
-    private static final int TEXT = 0xffffffff;
-    private static final int SECONDARY = 0xffbcbcbc;
+    private static final int BACKGROUND = 0xff080e14;
+    private static final int PANEL = 0xff0b1118;
+    private static final int PANEL_LIGHT = 0xff19222b;
+    private static final int INCOMING = 0xff111a23;
+    private static final int TEXT = 0xffe5edf3;
+    private static final int SECONDARY = 0xff91a6b5;
     private static final int ACCENT = 0xffff263c;
     private static final int SELECTED = 0xff00ffff;
     private static final int WARNING = 0xffffd38d;
@@ -464,6 +464,10 @@ public final class TelegramSurface extends FrameLayout {
         compose.addView(pending, new LinearLayout.LayoutParams(-1, -2));
 
         editor = horizontal();
+        // The editor and icon buttons have intentionally different baselines.
+        // Baseline alignment plus bottom gravity can push a scaled multiline
+        // EditText below the row's measured bounds on Android.
+        editor.setBaselineAligned(false);
         editor.setGravity(Gravity.BOTTOM);
         editor.setPadding(dp(4), dp(4), dp(4), dp(4));
         compose.addView(editor, new LinearLayout.LayoutParams(-1, -2));
@@ -826,7 +830,9 @@ public final class TelegramSurface extends FrameLayout {
             }
             if (chat) {
                 setText(title, payload.optString("name", "Agent conversation"));
-                title.setTextColor(color);
+                baseTextSizes.put(title, worldDock ? 17f : 19f);
+                title.setTextSize((worldDock ? 17f : 19f) * appScale);
+                title.setTextColor(worldDock ? TEXT : color);
                 title.setContentDescription("Conversation recipient: " + payload.optString("name", "Agent")
                     + ". Tap for work, state and history coverage.");
             } else if ("activity".equals(viewName)) {
@@ -881,8 +887,10 @@ public final class TelegramSurface extends FrameLayout {
             reply.setMaxLines(compactLayout ? 1 : 3);
             pending.setMaxLines(compactLayout ? 1 : 3);
             replyTop.setContentDescription(payload.optString("replyLabel") + ". Tap to review or clear this reply without leaving the conversation.");
-            int editorLines = shortLayout ? 1 : compactLayout ? 2 : 4;
-            int editorCap = dp(shortLayout ? 72 : compactLayout ? 96 : 112);
+            // A normal dock is shorter than a full chat, not a one-line-only
+            // input. Let real multiline drafts grow before scrolling them.
+            int editorLines = constrainedIme ? 1 : worldDock ? 3 : shortLayout ? 2 : compactLayout ? 3 : 4;
+            int editorCap = dp(constrainedIme ? 72 : worldDock ? 112 : shortLayout ? 72 : 112);
             if (constrainedIme) editorCap = Math.max(dp(44), Math.min(editorCap, panelLayoutHeight - dp(8)));
             int editorPadding = input.getCompoundPaddingTop() + input.getCompoundPaddingBottom();
             int editorLineHeight = input.getLineHeight();
@@ -896,7 +904,7 @@ public final class TelegramSurface extends FrameLayout {
             compose.setVisibility(chat ? VISIBLE : GONE);
             modeSelector.setVisibility(constrainedIme && panelLayoutWidth < dp(350) ? GONE : VISIBLE);
             String selectedModeLabel = "queue".equals(selectedSendMode) ? "Queue" : "steer".equals(selectedSendMode) ? "Steer" : compactLayout ? "Send" : "Follow-up";
-            if (worldDock && compactLayout) icon(modeSelector, "send-mode", color);
+            if (worldDock && compactLayout) icon(modeSelector, "send-mode", SECONDARY);
             else {
                 modeSelector.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null);
                 modeSelector.setIncludeFontPadding(true);
@@ -1772,7 +1780,7 @@ public final class TelegramSurface extends FrameLayout {
         if (!local && isPinned(message.optString("id"))) role += " · Pinned";
         if (local) role += " · Local request";
         else if (!kind.isEmpty()) role += " · " + kind;
-        TextView author = text(11, outgoing ? TEXT : accent, true);
+        TextView author = text(11, outgoing ? TEXT : worldDock ? SECONDARY : accent, true);
         author.setText(role);
         bubble.addView(author);
 

@@ -46,9 +46,10 @@ public final class WorkspaceChecks extends Instrumentation {
     private TelegramSurface surface;
     private String savedCache;
     private int checks;
+    private boolean previewOnly;
     private final JSONArray evidence = new JSONArray();
 
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); previewOnly = arguments != null && "true".equals(arguments.getString("previewOnly")); start(); }
     private interface UiCall<T> { T run() throws Exception; }
     @SuppressWarnings("unchecked") private <T> T ui(UiCall<T> task) throws Exception {
         if (Looper.myLooper() == Looper.getMainLooper()) return task.run();
@@ -382,12 +383,34 @@ public final class WorkspaceChecks extends Instrumentation {
         try {
             activity = startActivitySync(new Intent().setClassName(getTargetContext().getPackageName(), "org.omega.dracowatch.MonitorActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
             waitForIdleSync(); check(activityField("profile") == null, "mandatory unpaired target has no production profile");
-            check(Math.abs(activity.getResources().getConfiguration().fontScale - 1.5f) < .02, "actual Android native font is 150 percent");
+            check(Math.abs(activity.getResources().getConfiguration().fontScale - (previewOnly ? 1f : 1.5f)) < .02, "actual Android native font matches the requested review size");
             web = (WebView) activityField("web"); surface = (TelegramSurface) activityField("telegram"); waitJs("!!window.DracoWatch");
             savedCache = js("localStorage.getItem('" + CACHE + "')");
-            js("window.workspaceReloadSentinel=true;localStorage.setItem('" + CACHE + "',JSON.stringify({drafts:{},pins:[],pinHistory:[],outbox:[],attachments:[],preferences:{scale:150,motion:true,rendering:'light',echoToTelegram:false,automaticSpeech:false,playbackRate:1}}));true");
+            js("window.workspaceReloadSentinel=true;localStorage.setItem('" + CACHE + "',JSON.stringify({drafts:{},pins:[],pinHistory:[],outbox:[],attachments:[],preferences:{scale:" + (previewOnly ? 100 : 150) + ",motion:true,rendering:'light',echoToTelegram:false,automaticSpeech:false,playbackRate:1}}));true");
             runOnMainSync(() -> web.reload()); waitJs("document.readyState==='complete'&&typeof workspaceReloadSentinel==='undefined'&&!!window.DracoWatch");
             installFixture(); js("DracoWatch.view('environment');true"); waitJs("workspaceChecks.last.view==='environment'");
+            if (previewOnly) {
+                // Render the actual unpaired Android UI at normal user size.
+                // These are synthetic preview artifacts, not another passing
+                // workflow count or a claim of physical-phone acceptance.
+                js("(()=>{const original=workspaceFixture;window.workspaceFixture=(agent='atlas')=>{const value=original(agent);value.conversation[0].text='Synthetic preview conversation.\\nThe world stays open while you read, reply, attach files or record a voice message.';return value;};return true;})()");
+                for (boolean landscape : new boolean[]{false,true}) {
+                    String label = "preview-" + (landscape ? "landscape" : "portrait");
+                    runOnMainSync(() -> activity.setRequestedOrientation(landscape ? ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE : ActivityInfo.SCREEN_ORIENTATION_PORTRAIT));
+                    waitJs(landscape ? "innerWidth>innerHeight" : "innerHeight>innerWidth"); settle();
+                    js("DracoWatch.back();workspaceChecks.renderer.resetPlayer();true"); settle();
+                    Bitmap scene = getUiAutomation().takeScreenshot();
+                    try (FileOutputStream out = new FileOutputStream(artifact(label + "-world.png"))) { scene.compress(Bitmap.CompressFormat.PNG,100,out); } finally { scene.recycle(); }
+                    js("document.getElementById('world-crew-toggle').click();true"); settle();
+                    Bitmap crew = getUiAutomation().takeScreenshot();
+                    try (FileOutputStream out = new FileOutputStream(artifact(label + "-agents.png"))) { crew.compress(Bitmap.CompressFormat.PNG,100,out); } finally { crew.recycle(); }
+                    open("atlas");
+                    ui(() -> { ((EditText)tag("telegram-draft")).setText("Keep this draft with ATLAS."); return null; });
+                    screenshot(label + "-conversation",landscape,false);
+                    click("telegram-back"); settle();
+                }
+                result.putString("stream","Normal-size Android preview captured. Unpaired synthetic data; not workflow or handset acceptance.\n"); finish(0,result); return;
+            }
             orientation(false); orientation(true);
             check(activityField("profile") == null, "target remains unpaired after all native workflows");
             scriptCheck("workspaceChecks.calls.every(c=>['REFRESH','CHOOSE_FILE','START_RECORDING','STOP_RECORDING','CANCEL_FILE','RELEASE_FILE','CONFIRM'].includes(c.method)||c.method==='GET'&&c.path.startsWith('/v1/capabilities?')||c.method==='POST'&&['/v1/message','/v1/abort','/v1/diagnostics'].includes(c.path))", "all admissions, controls, picker and recorder calls stayed inside the installed synthetic fixture");

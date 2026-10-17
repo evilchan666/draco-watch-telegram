@@ -939,6 +939,27 @@ body.world-docked .world-contacts { max-height: max(88px,calc(100dvh - var(--wor
  body.world-docked .world-contacts { max-height: calc(100dvh - max(16px,var(--world-safe-top,0px)) - 85px); }
 }
 body.ime-open .world-contacts { display: none; }
+/* One shell: a single toolbar, not world + dashboard + chat navigation.
+   The same chooser remains available beside the native conversation. */
+.world-top { align-items: center; padding: 5px; border: 1px solid #8ca1b329; border-radius: 12px; background: #080e14eb; }
+.world-system-identity { flex: 0 0 auto; }
+.world-hud .world-menu-button { width: 44px; height: 44px; padding: 0; justify-content: center; border: 0; box-shadow: none; background: transparent; }
+.world-menu-button > span:last-child,.world-build { display: none !important; }
+.world-top .world-workspace-bar { position: static; flex: 1; min-width: 0; max-width: none; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; }
+.world-top .world-workspace-head { display: block; }
+.world-top .world-crew-toggle { width: 100%; min-width: 0; background: transparent; font-size: .68rem; }
+.world-top .world-contacts { position: absolute; inset: calc(100% + 8px) 0 auto; padding: 10px; border: 1px solid #8ca1b329; border-radius: 12px; background: #080e14fa; box-shadow: 0 16px 36px #0007; }
+.world-hud .world-connection { flex: 0 0 auto; max-width: 45%; border: 0; box-shadow: none; background: transparent; }
+.world-target { visibility: hidden; } /* Recipient already names the sole primary action. */
+.world-hud .world-talk { background: #cf253aeb; border-color: #f84c60; color: white; }
+.world-interact { bottom: max(52px,calc(var(--world-safe-bottom,0px) + 32px)); }
+body.world-docked .world-top { display: flex !important; }
+body.world-docked .world-top .world-workspace-bar { position: static; padding: 0; border: 0; background: transparent; box-shadow: none; }
+body.world-docked .conversation-screen { border-color: #8ca1b329; }
+body.world-expanded .world-top,body.ime-open.world-docked .world-top { display: none !important; }
+@media (orientation:landscape) and (min-width:600px) {
+ body.world-docked .world-top { right: calc(var(--world-panel-width) + 10px); }
+}
 @media (max-height:500px) {
  .world-workspace-bar { top: max(58px,calc(var(--world-safe-top,0px) + 46px)); }
  .world-contacts { max-height: calc(100dvh - 130px); }

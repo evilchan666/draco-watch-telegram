@@ -1,9 +1,9 @@
 {
-  "watchSource": "c8f5c009948251d310b6aac1ca2fd72b3e0e695d",
+  "watchSource": "567615da1b32350aeaf7ec5bb961cc3f760740ff",
   "telegramBase": "f32ffeec763f0bdbf4bec25b52d654f77bff733d",
   "versionName": "0.8.0",
   "versionCode": 29,
-  "integration": "Retained observatory operating space, fixed exact-recipient chooser, draggable native conversation sheet, actual installed build and connection diagnosis",
+  "integration": "One operating shell: retained first-person observatory, single six-agent chooser, native conversation sheet, per-recipient custody and installed-build reporting",
   "loginMigration": false,
   "updaterPublished": false,
   "physicalAcceptance": "unverified",
@@ -12,5 +12,5 @@
     "versionCode": 28,
     "sha256": "2fc9080ccc53582f47423569dce411d73b5a3c47c967758d2129110331684dad"
   },
-  "releaseState": "Candidate; Android verification pending"
+  "releaseState": "Android retained-world, IME, recipient, native composer, offline connection and installer-result checks verified; not yet published"
 }
